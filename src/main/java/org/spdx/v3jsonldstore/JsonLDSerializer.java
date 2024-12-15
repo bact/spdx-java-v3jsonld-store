@@ -51,15 +51,16 @@ import net.jimblackler.jsonschemafriend.GenerationException;
 
 /**
  * @author Gary O'Neall
- *
+ * <p>
  * Serializer to serialize a model store containing SPDX Spec version 3 elements
- * 
+ * <p>
  * The <code>serialize()</code> method will serialize the <code>@graph</code> for all SPDX elements
  * stored in the model store.
  * 
  * The <code>serialize(SpdxElement element)</code> will serialize a single element
  * 
  */
+@SuppressWarnings("LoggingSimilarMessage")
 public class JsonLDSerializer {
 	
 	static final Logger logger = LoggerFactory.getLogger(JsonLDSerializer.class);
@@ -146,12 +147,12 @@ public class JsonLDSerializer {
 
 	private static final String CONTEXT_PROP = "@context";
 	
-	private IModelStore modelStore;
-	private ObjectMapper jsonMapper;
-	private boolean pretty;
-	private String specVersion;
-	private JsonLDSchema jsonLDSchema;
-	private boolean useExternalListedElements;
+	private final IModelStore modelStore;
+	private final ObjectMapper jsonMapper;
+	private final boolean pretty;
+	private final String specVersion;
+	private final JsonLDSchema jsonLDSchema;
+	private final boolean useExternalListedElements;
 
 	/**
 	 * @param jsonMapper mapper to use for serialization
@@ -179,7 +180,7 @@ public class JsonLDSerializer {
 	/**
 	 * @param objectToSerialize optional SPDX Document or single element to serialize 
 	 * @return the root node of the JSON serialization
-	 * @throws InvalidSPDXAnalysisException on errors retrieveing the information for serialization
+	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for serialization
 	 */
 	public JsonNode serialize(@Nullable CoreModelObject objectToSerialize) throws InvalidSPDXAnalysisException {
 		if (Objects.isNull(objectToSerialize)) {
@@ -197,10 +198,10 @@ public class JsonLDSerializer {
 
 	/**
 	 * Serialize SPDX document metadata and ALL elements listed in the root + all elements listed in the elements list
-	 * all references to SPDX elements not in the root or elements lists will be externa
+	 * all references to SPDX elements not in the root or elements lists will be external
 	 * @param spdxDocument SPDX document to utilize
 	 * @return the root node of the JSON serialization
-	 * @throws InvalidSPDXAnalysisException on errors retrieveing the information for serialization
+	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for serialization
 	 */
 	private JsonNode serializeSpdxDocument(SpdxDocument spdxDocument) throws InvalidSPDXAnalysisException {
 		ObjectNode root = jsonMapper.createObjectNode();
@@ -208,12 +209,11 @@ public class JsonLDSerializer {
 		
 		Map<String, String> idToSerializedId = new HashMap<>();
 		List<JsonNode> graph = new ArrayList<>();
-		Set<Element> elementsToCopy = new HashSet<>();
-		IModelStoreLock lock = modelStore.enterCriticalSection(false);
+        IModelStoreLock lock = modelStore.enterCriticalSection(false);
 		try {
 			// Collect all the elements we want to copy
-			spdxDocument.getRootElements().forEach(elementsToCopy::add);
-			spdxDocument.getElements().forEach(elementsToCopy::add);
+            Set<Element> elementsToCopy = new HashSet<>(spdxDocument.getRootElements());
+            elementsToCopy.addAll(spdxDocument.getElements());
 			// collect all the creation infos
 			Set<CreationInfo> creationInfos = new HashSet<>();
 			for (Element element:elementsToCopy) {
@@ -274,9 +274,11 @@ public class JsonLDSerializer {
 		retval.set(JsonLDDeserializer.SPDX_ID_PROP, new TextNode(serializedId));
 		retval.set("type", new TextNode(typeToJsonType(SpdxConstantsV3.CORE_SPDX_DOCUMENT)));
 		for (PropertyDescriptor prop:spdxDocument.getPropertyValueDescriptors()) {
-			if (SpdxConstantsV3.PROP_ELEMENT.equals(prop)) {
+            //noinspection StatementWithEmptyBody
+            if (SpdxConstantsV3.PROP_ELEMENT.equals(prop)) {
 				// skip the elements property - it will in the elements in the graph
-			} else if (SpdxConstantsV3.PROP_NAMESPACE_MAP.equals(prop)) {
+			} else //noinspection StatementWithEmptyBody
+                if (SpdxConstantsV3.PROP_NAMESPACE_MAP.equals(prop)) {
 				// TODO: Add this to the context in the future once it is supported in the schema
 			} else {
 				if (spdxDocument.getModelStore().isCollectionProperty(spdxDocument.getObjectUri(), prop)) {
@@ -301,7 +303,7 @@ public class JsonLDSerializer {
 	 * Serializes a single SPDX element - all references to other elements will be external element references
 	 * @param objectToSerialize object to serialize
 	 * @return the root of the serialized form of the objectToSerialize
-	 * @throws InvalidSPDXAnalysisException 
+	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
 	 */
 	private JsonNode serializeElement(Element objectToSerialize) throws InvalidSPDXAnalysisException {
 		ObjectNode root = jsonMapper.createObjectNode();
@@ -334,7 +336,7 @@ public class JsonLDSerializer {
 	/**
 	 * Serialize all the objects stored in the model store
 	 * @return the root node of the JSON serialization
-	 * @throws InvalidSPDXAnalysisException on errors retrieveing the information for serialization
+	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for serialization
 	 */
 	private JsonNode serializeAllObjects() throws InvalidSPDXAnalysisException {
 		ObjectNode root = jsonMapper.createObjectNode();
@@ -433,7 +435,7 @@ public class JsonLDSerializer {
 	 * @param fromModelStore modelStore to retrieve the property information from
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
 	 * @return object converted to a JSON node based on the SPDX 3.X schema
-	 * @throws InvalidSPDXAnalysisException 
+	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
 	 */
 	private JsonNode objectToJsonNode(Object object, IModelStore fromModelStore, Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
 		if (object instanceof TypedValue) {
@@ -476,7 +478,7 @@ public class JsonLDSerializer {
 			AnyLicenseInfo licenseInfo = (AnyLicenseInfo)ModelRegistry.getModelRegistry().inflateModelObject(fromModelStore, tv.getObjectUri(), tv.getType(), new ModelCopyManager(), tv.getSpecVersion(), false, "");
 			return new TextNode(licenseInfo.toString());
 		} else {
-			// we should inline to the object
+			// we should inline the object
 			return inlinedJsonNode(tv, fromModelStore, idToSerializedId);
 		}
 	}

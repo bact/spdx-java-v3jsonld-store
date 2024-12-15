@@ -60,8 +60,8 @@ public class JsonLDDeserializer {
 		Map<String, String> jsonPrefixToModelPrefix = new HashMap<>();
 		Arrays.spliterator(SpdxConstantsV3.ALL_SPDX_CLASSES).forEachRemaining(c -> {
 			allSpdxTypes.add(c);
-			String nmspace = c.split("\\.")[0];
-			jsonPrefixToModelPrefix.put(nmspace.toLowerCase(), nmspace);
+			String nmSpace = c.split("\\.")[0];
+			jsonPrefixToModelPrefix.put(nmSpace.toLowerCase(), nmSpace);
 		});
 		ALL_SPDX_TYPES = Collections.unmodifiableSet(allSpdxTypes);
 		JSON_PREFIX_TO_MODEL_PREFIX = Collections.unmodifiableMap(jsonPrefixToModelPrefix);
@@ -73,10 +73,10 @@ public class JsonLDDeserializer {
 		NON_PROPERTY_FIELD_NAMES = Collections.unmodifiableSet(nonPropertyFieldNames);
 	}
 	
-	private IModelStore modelStore;
-	private ModelCopyManager copyManager;
-	private ConcurrentMap<String, String> jsonAnonToStoreAnon = new ConcurrentHashMap<>();
-	private ConcurrentMap<String, JsonLDSchema> versionToSchema = new ConcurrentHashMap<>();
+	private final IModelStore modelStore;
+	private final ModelCopyManager copyManager;
+	private final ConcurrentMap<String, String> jsonAnonToStoreAnon = new ConcurrentHashMap<>();
+	private final ConcurrentMap<String, JsonLDSchema> versionToSchema = new ConcurrentHashMap<>();
 
 	/**
 	 * @param modelStore Model store to deserialize the JSON text into
@@ -89,8 +89,8 @@ public class JsonLDDeserializer {
 	/**
 	 * Deserializes the JSON-LD graph into the modelStore
 	 * @param graph Graph to deserialize
-	 * @return list of non-anonomous typed value Elements found in the graph nodes
-	 * @throws InvalidSPDXAnalysisException 
+	 * @return list of non-anonymous typed value Elements found in the graph nodes
+	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
 	 */
 	public List<TypedValue> deserializeGraph(JsonNode graph) throws InvalidSPDXAnalysisException {
 		List<TypedValue> nonAnonGraphItems = new ArrayList<>();
@@ -182,7 +182,7 @@ public class JsonLDDeserializer {
 	 * @param node SPDX object node
 	 * @param creationInfoIdToSpecVersion map of creation info IDs to spec versions
 	 * @param defaultSpecVersion default to use if no spec information could be found
-	 * @return
+	 * @return the spec version
 	 */
 	String getSpecVersionFromNode(JsonNode node, Map<String, String> creationInfoIdToSpecVersion, String defaultSpecVersion) {
 		if (node.has(SPEC_VERSION_PROP)) {
@@ -193,7 +193,7 @@ public class JsonLDDeserializer {
 				if (creationInfoNode.has(SPEC_VERSION_PROP)) {
 					return creationInfoNode.get(SPEC_VERSION_PROP).asText();
 				} else {
-					logger.warn("Missing creation info spec version");
+					logger.warn("Missing creation info object spec version");
 					return defaultSpecVersion;
 				}
 			} else {
@@ -201,7 +201,7 @@ public class JsonLDDeserializer {
 				if (creationInfoIdToSpecVersion.containsKey(creationInfoId)) {
 					return creationInfoIdToSpecVersion.get(creationInfoId);
 				} else {
-					logger.warn("Missing creation info spec version");
+					logger.warn("Missing creation info string spec version");
 					return defaultSpecVersion;
 				}
 			}
@@ -228,13 +228,13 @@ public class JsonLDDeserializer {
 			if (!NON_PROPERTY_FIELD_NAMES.contains(field.getKey())) {
 				PropertyDescriptor property;
 				try {
-					Optional<PropertyDescriptor> optDesc = jsonFieledNameToProperty(field.getKey(), tv.getSpecVersion());
+					Optional<PropertyDescriptor> optDesc = jsonFieldNameToProperty(field.getKey(), tv.getSpecVersion());
 					if (!optDesc.isPresent()) {
 						throw new InvalidSPDXAnalysisException("No property descriptor for field "+field.getKey());
 					}
 					property = optDesc.get();
 				} catch (GenerationException e) {
-					throw new InvalidSPDXAnalysisException("Unable to convrt a JSON field name to a property", e);
+					throw new InvalidSPDXAnalysisException("Unable to convert a JSON field name to a property", e);
 				}
 				if (field.getValue().isArray()) {
 					for (Iterator<JsonNode> elements = field.getValue().elements(); elements.hasNext(); ) {
@@ -342,7 +342,7 @@ public class JsonLDDeserializer {
 			case BINARY:
 			case MISSING:
 			case POJO:
-			default: throw new InvalidSPDXAnalysisException("Unsupported JSON node type: "+value.toString());
+			default: throw new InvalidSPDXAnalysisException("Unsupported JSON node type: "+ value);
 			}
 	}
 
@@ -422,15 +422,15 @@ public class JsonLDDeserializer {
 	 * @return Property descriptor associated with the JSON field name based on the Schema
 	 * @throws GenerationException when we can not create a schema
 	 */
-	private Optional<PropertyDescriptor> jsonFieledNameToProperty(String fieldName,
-			String specVersion) throws GenerationException {
+	private Optional<PropertyDescriptor> jsonFieldNameToProperty(String fieldName,
+																 String specVersion) throws GenerationException {
 		JsonLDSchema schema = getOrCreateSchema(specVersion);
 		return schema.getPropertyDescriptor(fieldName);
 	}
 
 	/**
 	 * @param specVersion version of the spec
-	 * @return a schema for the spec version supplie
+	 * @return a schema for the spec version supplied
 	 * @throws GenerationException when we can not create a schema
 	 */
 	private JsonLDSchema getOrCreateSchema(String specVersion) throws GenerationException {
@@ -466,7 +466,7 @@ public class JsonLDDeserializer {
 
 	/**
 	 * @param typeNode node containing the type
-	 * @return
+	 * @return the SPDX type
 	 */
 	private Optional<String> typeNodeToType(JsonNode typeNode) {
 		if (Objects.isNull(typeNode)) {

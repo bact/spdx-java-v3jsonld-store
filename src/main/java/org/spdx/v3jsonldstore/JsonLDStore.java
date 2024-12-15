@@ -7,15 +7,7 @@ package org.spdx.v3jsonldstore;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 import javax.annotation.Nullable;
 
@@ -39,7 +31,6 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import net.jimblackler.jsonschemafriend.GenerationException;
 
@@ -56,7 +47,8 @@ public class JsonLDStore extends ExtendedSpdxStore
 	static final Logger logger = LoggerFactory.getLogger(JsonLDStore.class);
 	static final ObjectMapper JSON_MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 	
-	boolean pretty = true;
+	@SuppressWarnings("UnusedAssignment")
+    boolean pretty = true;
 	private boolean useExternalListedElements = false;
 	
 	/**
@@ -102,7 +94,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 		try {
 			serializer = new JsonLDSerializer(JSON_MAPPER, pretty, useExternalListedElements, SpdxModelFactory.getLatestSpecVersion(), this);
 		} catch (GenerationException e) {
-			throw new InvalidSPDXAnalysisException("Unable to reate JSON LD serializer", e);
+			throw new InvalidSPDXAnalysisException("Unable to create JSON LD serializer", e);
 		}
 		JsonNode output = serializer.serialize(objectToSerialize);
 		JsonGenerator jgen = null;
@@ -137,7 +129,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 				if (existingElementUris.size() >= 5) {
 					sb.append(", [more]...");
 				}
-				throw new InvalidSPDXAnalysisException("The SPDX element IDs would be overwritten: ");
+				throw new InvalidSPDXAnalysisException("The SPDX element IDs would be overwritten: " + sb);
 			}
 		}
 		JsonLDDeserializer deserializer = new JsonLDDeserializer(this);
@@ -151,7 +143,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 		} else {
 			try {
 				TypedValue element = deserializer.deserializeElement(root);
-				return elementsToSpdxDocument(Arrays.asList(new TypedValue[] {element}));
+				return elementsToSpdxDocument(Collections.singletonList(element));
 			} catch (GenerationException e) {
 				throw new InvalidSPDXAnalysisException("Error opening or reading SPDX 3.X schema",e);
 			}
@@ -162,7 +154,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 	/**
 	 * @param graphElements elements found in the serialized graph
 	 * @return an SPDX document representing the serialization
-	 * @throws InvalidSPDXAnalysisException 
+	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
 	 */
 	private SpdxDocument elementsToSpdxDocument(List<TypedValue> graphElements) throws InvalidSPDXAnalysisException {
 		List<TypedValue> existingSpdxDocument = new ArrayList<>();
@@ -178,7 +170,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 						 false, null); 
 		} else {
 			
-			String documentObjectUri = "urn:spdx-document:" +  UUID.randomUUID().toString();
+			String documentObjectUri = "urn:spdx-document:" + UUID.randomUUID();
 			retval = (SpdxDocument)SpdxModelFactory.inflateModelObject(this, documentObjectUri,
 					SpdxConstantsV3.CORE_SPDX_DOCUMENT, null, SpdxModelFactory.getLatestSpecVersion(),
 					 true, null); 
@@ -200,7 +192,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 					}
 					addExternalElements(mo, referencedExternalElementUris, alreadySearched);
 				} else {
-					logger.warn("Non element in the serialized graph - "+element.getObjectUri()+" will not be included in the SPDX document elements");
+                    logger.warn("Non element in the serialized graph - {} will not be included in the SPDX document elements", element.getObjectUri());
 				}
 			}
 		}
@@ -217,7 +209,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 	 * Searches for any external elements referenced in the model object and adds that to the referencedExternalElementUris
 	 * @param modelObject modelObject to search for external references
 	 * @param referencedExternalElementUris referenced external element URIs
-	 * @param alreadySearch set of URI's which have already been searched
+	 * @param alreadySearched set of URIs which have already been searched
 	 * @throws InvalidSPDXAnalysisException on error fetching property values
 	 */
 	private void addExternalElements(CoreModelObject modelObject,
@@ -248,7 +240,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 		JsonNode graph = root.get("@graph");
 		if (Objects.nonNull(graph)) {
 			if (graph.isArray()) {
-				for (JsonNode spdxObject:((ArrayNode)graph)) {
+				for (JsonNode spdxObject: graph) {
 					JsonNode spdxId = spdxObject.get("spdxId");
 					if (Objects.nonNull(spdxId) && !isAnon(spdxId.asText()) && exists(spdxId.asText())) {
 						retval.add(spdxId.asText());

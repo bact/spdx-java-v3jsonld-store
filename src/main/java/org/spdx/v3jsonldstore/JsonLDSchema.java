@@ -43,6 +43,7 @@ import net.jimblackler.jsonschemafriend.Validator;
  * Represents the JSON Schema for SPDX 3.X includes a number of convenience methods
  *
  */
+@SuppressWarnings("LoggingSimilarMessage")
 public class JsonLDSchema {
 	
 	static final Logger logger = LoggerFactory.getLogger(JsonLDSchema.class);
@@ -90,12 +91,12 @@ public class JsonLDSchema {
 	static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 	private static final String OBJECT_TYPE = "http://www.w3.org/2002/07/owl#ObjectProperty";
 	private static final String INDIVIDUAL_TYPE = "http://www.w3.org/2002/07/owl#NamedIndividual";
-	private JsonNode contexts;
-	private Schema spdxRootSchema;
-	private Map<String, JsonNode> modelStatements = new HashMap<>(); // maps the ID to the statement
-	private Validator validator = new Validator();
-	private List<String> elementTypes;
-	private List<String> anyLicenseInfoTypes;
+	private final JsonNode contexts;
+	private final Schema spdxRootSchema;
+	private final Map<String, JsonNode> modelStatements = new HashMap<>(); // maps the ID to the statement
+	private final Validator validator = new Validator();
+	private final List<String> elementTypes;
+	private final List<String> anyLicenseInfoTypes;
 
 	/**
 	 * @param schemaFileName File name for the schema file in the resources directory
@@ -219,7 +220,7 @@ public class JsonLDSchema {
 	/**
 	 * @param propertyName name of the property to check
 	 * @param schema schema containing property restrictions
-	 * @param checkSchemas set of schemas which has already been checked
+	 * @param checkedSchemas set of schemas which has already been checked
 	 * @return true if the schema requires a property named propertyName via properties, subSchemas, or allOf
 	 */
 	private boolean hasProperty(String propertyName, Schema schema, Set<Schema> checkedSchemas) {
@@ -386,15 +387,15 @@ public class JsonLDSchema {
 	}
 
 	/**
-	 * @param propertyName
+	 * @param propertyName name of the property
 	 * @return the JSON property type if it exists in the JSON-LD context
 	 */
 	public Optional<String> getPropertyType(String propertyName) {
-		JsonNode propertytNode = contexts.get(propertyName);
-		if (Objects.isNull(propertytNode)) {
+		JsonNode propertyNode = contexts.get(propertyName);
+		if (Objects.isNull(propertyNode)) {
 			return Optional.empty();
 		}
-		JsonNode typeNode = propertytNode.get("@type");
+		JsonNode typeNode = propertyNode.get("@type");
 		return Objects.isNull(typeNode) ? Optional.empty() : Optional.of(typeNode.asText());
 	}
 
@@ -440,11 +441,11 @@ public class JsonLDSchema {
 	 * @return the SHACL statement from the model if it exists
 	 */
 	private Optional<JsonNode> getPropertyShacl(String propertyName) {
-		JsonNode propertytNode = contexts.get(propertyName);
-		if (Objects.isNull(propertytNode)) {
+		JsonNode propertyNode = contexts.get(propertyName);
+		if (Objects.isNull(propertyNode)) {
 			return Optional.empty();
 		}
-		JsonNode idNode = propertytNode.get("@id");
+		JsonNode idNode = propertyNode.get("@id");
 		if (Objects.isNull(idNode)) {
 			return Optional.empty();
 		}
@@ -468,11 +469,11 @@ public class JsonLDSchema {
 		if (Objects.isNull(types)) {
 			return false;
 		}
-		for (Iterator<JsonNode> iter = types.iterator(); iter.hasNext();) {
-			if (OBJECT_TYPE.equals(iter.next().asText())) {
-				objectType = true;
-			}
-		}
+        for (JsonNode type : types) {
+            if (OBJECT_TYPE.equals(type.asText())) {
+                objectType = true;
+            }
+        }
 		return objectType;
 	}
 	
