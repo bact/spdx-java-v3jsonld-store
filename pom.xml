@@ -106,6 +106,12 @@
 									<goal>jar</goal>
 								</goals>
 							</execution>
+							<execution>
+								<goals>
+									<goal>javadoc</goal>
+									<goal>generatePackageList</goal>
+								</goals>
+                    		</execution>
 						</executions>
 					</plugin>
 					<plugin>
