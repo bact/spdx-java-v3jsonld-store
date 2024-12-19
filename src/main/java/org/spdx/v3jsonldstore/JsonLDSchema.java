@@ -38,10 +38,9 @@ import net.jimblackler.jsonschemafriend.SchemaStore;
 import net.jimblackler.jsonschemafriend.Validator;
 
 /**
- * @author Gary O'Neall
- * 
  * Represents the JSON Schema for SPDX 3.X includes a number of convenience methods
  *
+ * @author Gary O'Neall
  */
 @SuppressWarnings("LoggingSimilarMessage")
 public class JsonLDSchema {

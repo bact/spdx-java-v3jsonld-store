@@ -35,10 +35,9 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import net.jimblackler.jsonschemafriend.GenerationException;
 
 /**
- * @author Gary O'Neall
- * 
  * Serializable store which reads and writes the SPDX Spec version 3 JSON LD format
  *
+ * @author Gary O'Neall
  */
 public class JsonLDStore extends ExtendedSpdxStore
 		implements

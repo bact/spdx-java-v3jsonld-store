@@ -41,7 +41,6 @@ import net.jimblackler.jsonschemafriend.GenerationException;
  * Class to manage deserializing SPDX 3.X JSON-LD
  * 
  * @author Gary O'Neall
- *
  */
 public class JsonLDDeserializer {
 	

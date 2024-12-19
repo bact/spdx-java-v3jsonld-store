@@ -24,8 +24,7 @@ import net.jimblackler.jsonschemafriend.GenerationException;
 import net.jimblackler.jsonschemafriend.Schema;
 
 /**
- * @author gary
- *
+ * @author Gary O'Neall
  */
 public class JsonLDSchemaTest {
 	
