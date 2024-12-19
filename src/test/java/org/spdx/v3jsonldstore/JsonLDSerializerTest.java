@@ -37,8 +37,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import net.jimblackler.jsonschemafriend.GenerationException;
 
 /**
- * @author gary
- *
+ * @author Gary O'Neall
  */
 public class JsonLDSerializerTest {
 	ObjectMapper mapper;

@@ -50,15 +50,14 @@ import com.fasterxml.jackson.databind.node.TextNode;
 import net.jimblackler.jsonschemafriend.GenerationException;
 
 /**
- * @author Gary O'Neall
- * <p>
  * Serializer to serialize a model store containing SPDX Spec version 3 elements
  * <p>
  * The <code>serialize()</code> method will serialize the <code>@graph</code> for all SPDX elements
  * stored in the model store.
  * 
- * The <code>serialize(SpdxElement element)</code> will serialize a single element
+ * The <code>serialize(SpdxElement element)</code> will serialize a single element.
  * 
+ * @author Gary O'Neall
  */
 @SuppressWarnings("LoggingSimilarMessage")
 public class JsonLDSerializer {

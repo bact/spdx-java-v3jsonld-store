@@ -43,7 +43,6 @@ import net.jimblackler.jsonschemafriend.GenerationException;
 
 /**
  * @author Gary O'Neall
- *
  */
 public class JsonLDDeserializerTest {
 
