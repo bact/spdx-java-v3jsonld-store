@@ -91,6 +91,10 @@
 							<quiet>true</quiet>
 							<notimestamp>true</notimestamp>
 							<doclint>all,-missing</doclint>
+							<links>
+								<link>https://spdx.github.io/spdx-java-core/</link>
+								<link>https://spdx.github.io/Spdx-Java-Library/</link>
+							</links>
 						</configuration>
 						<executions>
 							<execution>
