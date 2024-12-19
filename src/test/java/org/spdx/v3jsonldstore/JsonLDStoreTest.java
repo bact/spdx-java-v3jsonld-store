@@ -41,8 +41,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 /**
- * @author gary
- *
+ * @author Gary O'Neall
  */
 public class JsonLDStoreTest {
 	
