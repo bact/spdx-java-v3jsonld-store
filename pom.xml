@@ -95,6 +95,7 @@
 								<link>https://spdx.github.io/spdx-java-core/</link>
 								<link>https://spdx.github.io/Spdx-Java-Library/</link>
 							</links>
+							<detectLinks>true</detectLinks>
 						</configuration>
 						<executions>
 							<execution>
@@ -106,12 +107,6 @@
 									<goal>jar</goal>
 								</goals>
 							</execution>
-							<execution>
-								<goals>
-									<goal>javadoc</goal>
-									<goal>generatePackageList</goal>
-								</goals>
-                    		</execution>
 						</executions>
 					</plugin>
 					<plugin>
