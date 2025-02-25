@@ -8,7 +8,7 @@
 
   <name>spdx-v3jsonld-store</name>
   <url>http://spdx.org</url>
-<description>Store for SPDX spec version 3 supporting the JSON-LD serialization format.</description>
+  <description>Store for SPDX spec version 3 supporting the JSON-LD serialization format.</description>
   <scm>
   	<url>https://github.com/spdx/spdx-java-v3jsonld-store</url>
   	<connection>scm:git:ssh://git@github.com:spdx/spdx-java-v3jsonld-store</connection>
@@ -82,6 +82,18 @@
 				        </execution>
 				      </executions>
 				    </plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-jar-plugin</artifactId>
+						<version>3.4.2</version>
+						<configuration>
+						<archive>
+							<manifestEntries>
+							<Automatic-Module-Name>org.spdx.v3jsonldstore</Automatic-Module-Name>
+							</manifestEntries>
+						</archive>
+						</configuration>
+					</plugin>
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-javadoc-plugin</artifactId>
