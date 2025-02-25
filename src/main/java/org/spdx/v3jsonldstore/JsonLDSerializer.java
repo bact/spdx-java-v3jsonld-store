@@ -64,7 +64,7 @@ public class JsonLDSerializer {
 	
 	static final Logger logger = LoggerFactory.getLogger(JsonLDSerializer.class);
 	
-	static final Comparator<JsonNode> NODE_COMPARATOR = new Comparator<>() {
+	static final Comparator<JsonNode> NODE_COMPARATOR = new Comparator<JsonNode>() {
 
 		@Override
 		public int compare(JsonNode arg0, JsonNode arg1) {
