@@ -1,6 +1,7 @@
 /**
+ * SPDX-FileCopyrightText: Copyright (c) 2024 Source Auditor Inc.
+ * SPDX-FileType: SOURCE
  * SPDX-License-Identifier: Apache-2.0
- * Copyright (c) 2024 Source Auditor Inc.
  */
 package org.spdx.v3jsonldstore;
 
@@ -154,12 +155,14 @@ public class JsonLDSerializer {
 	private final boolean useExternalListedElements;
 
 	/**
+	 * Serializer to serialize a model store containing SPDX 3 elements
+	 *
 	 * @param jsonMapper mapper to use for serialization
 	 * @param pretty true if the format is to be more verbose
 	 * @param useExternalListedElements if true, don't serialize any listed licenses or exceptions - treat them as external 
 	 * @param specVersion SemVer representation of the SPDX spec version
 	 * @param modelStore store where the SPDX elements are stored
-	 * @throws GenerationException  if the JSON schema is not found or is not valid
+	 * @throws GenerationException if the JSON schema is not found or is not valid
 	 */
 	public JsonLDSerializer(ObjectMapper jsonMapper, boolean pretty, boolean useExternalListedElements, String specVersion,
 			IModelStore modelStore) throws GenerationException {
@@ -196,11 +199,16 @@ public class JsonLDSerializer {
 	}
 
 	/**
-	 * Serialize SPDX document metadata and ALL elements listed in the root + all elements listed in the elements list
-	 * all references to SPDX elements not in the root or elements lists will be external
+	 * Serialize SPDX document metadata and ALL elements listed in the root + all
+	 * elements listed in the elements list
+	 *
+	 * All references to SPDX elements not in the root or elements lists will be
+	 * external.
+	 * 
 	 * @param spdxDocument SPDX document to utilize
 	 * @return the root node of the JSON serialization
-	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for serialization
+	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for
+	 *                                      serialization
 	 */
 	private JsonNode serializeSpdxDocument(SpdxDocument spdxDocument) throws InvalidSPDXAnalysisException {
 		ObjectNode root = jsonMapper.createObjectNode();
@@ -261,6 +269,7 @@ public class JsonLDSerializer {
 
 	/**
 	 * Serialize on the required portions of the SPDX document
+	 *
 	 * @param spdxDocument SPDX document to serialize
 	 * @param serializedId ID used in the serialization
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
@@ -299,7 +308,9 @@ public class JsonLDSerializer {
 	}
 
 	/**
-	 * Serializes a single SPDX element - all references to other elements will be external element references
+	 * Serializes a single SPDX element - all references to other elements will be
+	 * external element references
+	 *
 	 * @param objectToSerialize object to serialize
 	 * @return the root of the serialized form of the objectToSerialize
 	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
@@ -334,6 +345,7 @@ public class JsonLDSerializer {
 
 	/**
 	 * Serialize all the objects stored in the model store
+	 *
 	 * @return the root node of the JSON serialization
 	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for serialization
 	 */
@@ -385,6 +397,8 @@ public class JsonLDSerializer {
 	}
 
 	/**
+     * Converts a model object to a JSON node representation
+	 *
 	 * @param modelObject model object to serialize
 	 * @param serializedId ID used in the serialization
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
@@ -417,7 +431,7 @@ public class JsonLDSerializer {
 
 	/**
 	 * @param prop property
-	 * @return JSON LD property name per the SPDX 3.X JSON LD spec
+	 * @return JSON-LD property name per the SPDX 3.X JSON-LD spec
 	 */
 	private String propertyToJsonLdPropName(PropertyDescriptor prop) {
 		String profile = prop.getNameSpace().substring(0, prop.getNameSpace().length()-1);
@@ -430,6 +444,8 @@ public class JsonLDSerializer {
 	}
 
 	/**
+	 * Converts an object to a JSON node representation based on the SPDX 3.X schema
+	 *
 	 * @param object object to translate to a JSON node
 	 * @param fromModelStore modelStore to retrieve the property information from
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
@@ -461,6 +477,8 @@ public class JsonLDSerializer {
 	}
 
 	/**
+	 * Converts a typed value to a JSON node representation based on the SPDX 3.X schema
+	 *
 	 * @param tv typed value to translate to a JSON node
 	 * @param fromModelStore modelStore to retrieve the property information from
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
@@ -481,8 +499,11 @@ public class JsonLDSerializer {
 			return inlinedJsonNode(tv, fromModelStore, idToSerializedId);
 		}
 	}
-	
+
 	/**
+	 * Converts a typed value object with inlined property values to a JSON node
+	 * representation
+	 *
 	 * @param tv typed value to translate to a JSON node
 	 * @param fromModelStore modelStore to retrieve the property information from
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
@@ -512,6 +533,8 @@ public class JsonLDSerializer {
 	}
 
 	/**
+	 * Converts a model type to its JSON representation
+	 *
 	 * @param type model type
 	 * @return the JSON representation of the type
 	 */
@@ -525,7 +548,9 @@ public class JsonLDSerializer {
 	}
 
 	/**
-	 * @return JSON LD Schema
+	 * Returns the JSON-LD schema used for serialization
+	 *
+	 * @return JSON-LD Schema
 	 */
 	public JsonLDSchema getSchema() {
 		return this.jsonLDSchema;
