@@ -1,6 +1,7 @@
 /**
+ * SPDX-FileCopyrightText: Copyright (c) 2024 Source Auditor Inc.
+ * SPDX-FileType: SOURCE
  * SPDX-License-Identifier: Apache-2.0
- * Copyright (c) 2024 Source Auditor Inc.
  */
 package org.spdx.v3jsonldstore;
 
@@ -48,29 +49,38 @@ public class JsonLDStore extends ExtendedSpdxStore
 	private boolean useExternalListedElements = false;
 	
 	/**
+	 * Constructs a JsonLDStore with the specified base store and pretty format
+	 * option
+	 *
 	 * @param baseStore underlying store to use
-	 * @param pretty if true, use less compact prettier JSON LD format on output
+	 * @param pretty    if true, use less compact prettier JSON LD format on output
 	 */
 	public JsonLDStore(IModelStore baseStore, boolean pretty) {
 		super(baseStore);
 		this.pretty = pretty;
 	}
-	
+
 	/**
+	 * Constructs a JsonLDStore with the specified base store
+	 *
 	 * @param baseStore underlying store to use
 	 */
 	public JsonLDStore(IModelStore baseStore) {
 		this(baseStore, true);
 	}
-	
+
 	/**
+	 * Check the pretty format option for JSON LD output
+	 *
 	 * @return if true, use less compact prettier JSON LD format on output
 	 */
 	public boolean getPretty() {
 		return this.pretty;
 	}
-	
+
 	/**
+	 * Sets the pretty format option for JSON LD output
+	 *
 	 * @param pretty if true, use less compact prettier JSON LD format on output
 	 */
 	public void setPretty(boolean pretty) {
@@ -82,7 +92,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 			throws InvalidSPDXAnalysisException, IOException {
 		serialize(stream, null);
 	}
-	
+
 	@Override 
 	public void serialize(OutputStream stream, @Nullable CoreModelObject objectToSerialize)
 			throws InvalidSPDXAnalysisException, IOException {
@@ -148,6 +158,8 @@ public class JsonLDStore extends ExtendedSpdxStore
 
 
 	/**
+	 * Converts a list of elements from a serialized graph into an SPDX document
+	 *
 	 * @param graphElements elements found in the serialized graph
 	 * @return an SPDX document representing the serialization
 	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
@@ -205,7 +217,9 @@ public class JsonLDStore extends ExtendedSpdxStore
 	}
 
 	/**
-	 * Searches for any external elements referenced in the model object and adds that to the referencedExternalElementUris
+	 * Searches for any external elements referenced in the model object and adds
+	 * that to the referencedExternalElementUris
+	 *
 	 * @param modelObject modelObject to search for external references
 	 * @param referencedExternalElementUris referenced external element URIs
 	 * @param alreadySearched set of URIs which have already been searched
@@ -231,8 +245,12 @@ public class JsonLDStore extends ExtendedSpdxStore
 	}
 
 	/**
+	 * Retrieves the URIs of any SPDX elements that already exist in the base model
+	 * store
+	 *
 	 * @param root root of a graph containing SPDX elements
-	 * @return a list of any SPDX Element URI's that already exist in the base model store
+	 * @return a list of any SPDX Element URI's that already exist in the base model
+	 *         store
 	 */
 	private List<String> getExistingElementUris(JsonNode root) {
 		List<String> retval = new ArrayList<>();
@@ -257,7 +275,10 @@ public class JsonLDStore extends ExtendedSpdxStore
 	}
 
 	/**
-	 * @param useExternalListedElements if true, don't serialize any listed licenses or exceptions - treat them as external
+	 * Sets whether to use external listed elements
+	 *
+	 * @param useExternalListedElements if true, don't serialize any listed licenses
+	 *                                  or exceptions - treat them as external
 	 */
 	public void setUseExternalListedElements(boolean useExternalListedElements) {
 		this.useExternalListedElements  = useExternalListedElements;
