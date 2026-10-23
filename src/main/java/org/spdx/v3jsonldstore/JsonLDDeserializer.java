@@ -434,13 +434,66 @@ public class JsonLDDeserializer {
 			type = allowCustomType ? typeNodeToTypeOrCustomType(node.get("type"), specVersion) :
 				typeNodeToType(node.get("type"));
 			if (type.isEmpty()) {
-				logger.error("Missing type for core object {}", node);
-				throw new InvalidSPDXAnalysisException("Missing type for core object " + node);
+				String message = describeTypeError(node, specVersion, allowCustomType) + ": " + truncate(node.toString());
+				logger.error(message);
+				throw new InvalidSPDXAnalysisException(message);
 			}
 			TypedValue tv = new TypedValue(id, type.get(), specVersion);
 			modelStore.create(tv);
 			graphIdToTypedValue.put(id, tv);
 			return tv;
+		}
+	}
+
+	/**
+	 * Maximum length of a JSON node included in an error message
+	 */
+	private static final int MAX_NODE_LENGTH_IN_MESSAGE = 200;
+
+	/**
+	 * @param text text
+	 * @return the text, shortened to {@link #MAX_NODE_LENGTH_IN_MESSAGE} characters
+	 */
+	private static String truncate(String text) {
+		return text.length() <= MAX_NODE_LENGTH_IN_MESSAGE ? text :
+			text.substring(0, MAX_NODE_LENGTH_IN_MESSAGE) + "... (" + text.length() + " characters)";
+	}
+
+	/**
+	 * @param node JSON node for which no type was found
+	 * @param specVersion version of the spec
+	 * @param allowCustomType true if the object may have a custom type
+	 * @return a description of why the node has no usable type
+	 */
+	private String describeTypeError(JsonNode node, String specVersion, boolean allowCustomType) {
+		if (node.has("@list")) {
+			return "A JSON-LD list object - @list is not supported";
+		} else if (node.has("@set")) {
+			return "A JSON-LD set object - @set is not supported";
+		}
+		JsonNode typeNode = node.get("type");
+		if (Objects.isNull(typeNode)) {
+			return "Missing type for core object";
+		} else if (typeNode.isArray()) {
+			return "An object with more than one type is not supported";
+		} else if (!typeNode.isTextual()) {
+			return "The type of an object must be a string";
+		}
+		String type = typeNode.asText();
+		String expanded;
+		try {
+			expanded = getOrCreateSchema(specVersion).expandCompactIri(type);
+		} catch (GenerationException e) {
+			expanded = type;
+		}
+		if (expanded.startsWith(SPDX_NAMESPACE_PREFIX)) {
+			return "The type " + type + " is in the SPDX namespace but is not an SPDX class name of the JSON-LD context";
+		} else if (!isAbsoluteIri(expanded)) {
+			return "The type " + type + " is not an SPDX type and not an absolute IRI";
+		} else if (!allowCustomType) {
+			return "The type " + type + " is not an SPDX type - a custom type is only allowed in an extension or in the value of an extension property";
+		} else {
+			return "No class is registered for the custom type " + type;
 		}
 	}
 
@@ -642,7 +695,8 @@ public class JsonLDDeserializer {
 			throw new InvalidSPDXAnalysisException("Language-tagged strings (@language) are not supported.  Property: "+propertyName);
 		}
 		for (Entry<String, JsonNode> field : value.properties()) {
-			if (!"@value".equals(field.getKey()) && !"@type".equals(field.getKey())) {
+			// @index is not part of the RDF data
+			if (!"@value".equals(field.getKey()) && !"@type".equals(field.getKey()) && !"@index".equals(field.getKey())) {
 				throw new InvalidSPDXAnalysisException("Unsupported key "+field.getKey()+" in JSON-LD value object for property "+propertyName);
 			}
 		}

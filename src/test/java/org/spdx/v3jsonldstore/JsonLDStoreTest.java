@@ -632,18 +632,19 @@ public class JsonLDStoreTest {
 	 */
 	@Test
 	public void testCustomTypeRejected() throws Exception {
-		String[] rejectedTypes = new String[] {
-				"https://spdx.org/rdf/3.0.1/terms/Extension/Foo",	// unknown type in the SPDX namespace
-				"spdx:Extension/Foo",	// compact IRI expanding to the SPDX namespace
-				"FooExtension",	// not an absolute IRI
-				"_:T",	// blank node identifier
+		String[][] rejectedTypes = new String[][] {
+				{"\"https://spdx.org/rdf/3.0.1/terms/Extension/Foo\"", "SPDX namespace"},	// unknown type in the SPDX namespace
+				{"\"spdx:Extension/Foo\"", "SPDX namespace"},	// compact IRI expanding to the SPDX namespace
+				{"\"FooExtension\"", "not an absolute IRI"},	// not an absolute IRI
+				{"\"_:T\"", "not an absolute IRI"},	// blank node identifier
+				{"[\"" + X + "T\", \"" + X + "U\"]", "more than one type"},
 		};
-		for (String type : rejectedTypes) {
+		for (String[] type : rejectedTypes) {
 			try {
-				roundTrip(documentWithExtension("{\"type\": \"" + type + "\", \"" + X + "a\": 1}"));
-				fail("Type should be rejected: " + type);
+				roundTrip(documentWithExtension("{\"type\": " + type[0] + ", \"" + X + "a\": 1}"));
+				fail("Type should be rejected: " + type[0]);
 			} catch (InvalidSPDXAnalysisException e) {
-				assertTrue(e.getMessage(), e.getMessage().contains("Missing type"));
+				assertTrue(e.getMessage(), e.getMessage().contains(type[1]));
 			}
 		}
 		// a custom type under a property which is not an extension
@@ -654,7 +655,7 @@ public class JsonLDStoreTest {
 			roundTrip(doc);
 			fail("Custom type under verifiedUsing should be rejected");
 		} catch (InvalidSPDXAnalysisException e) {
-			assertTrue(e.getMessage(), e.getMessage().contains("Missing type"));
+			assertTrue(e.getMessage(), e.getMessage().contains("custom type is only allowed"));
 		}
 		// a custom type at the top level of the graph
 		doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
@@ -664,7 +665,28 @@ public class JsonLDStoreTest {
 			roundTrip(doc);
 			fail("Custom type at the top level should be rejected");
 		} catch (InvalidSPDXAnalysisException e) {
-			assertTrue(e.getMessage(), e.getMessage().contains("Missing type"));
+			assertTrue(e.getMessage(), e.getMessage().contains("custom type is only allowed"));
+		}
+		// lists and sets
+		for (String container : new String[] {"@list", "@set"}) {
+			try {
+				roundTrip(documentWithExtension("{\"type\": \"" + X + "T\", \"" + X + "a\": {\"" + container + "\": [1, 2]}}"));
+				fail(container + " should be rejected");
+			} catch (InvalidSPDXAnalysisException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains(container + " is not supported"));
+			}
+		}
+		// a large node is not written in full in the message
+		StringBuilder large = new StringBuilder("{\"type\": \"FooExtension\"");
+		for (int i = 0; i < 100; i++) {
+			large.append(", \"" + X + "p" + i + "\": \"value " + i + "\"");
+		}
+		large.append("}");
+		try {
+			roundTrip(documentWithExtension(large.toString()));
+			fail("Type should be rejected");
+		} catch (InvalidSPDXAnalysisException e) {
+			assertTrue(e.getMessage(), e.getMessage().length() < 500);
 		}
 		// accepted custom types do not each need a registration
 		roundTrip(documentWithExtension("{\"type\": \"urn:example:T\", \"" + X + "a\": 1}"));
@@ -683,7 +705,8 @@ public class JsonLDStoreTest {
 				+ "\"" + X + "numDecimal\": {\"@value\": 0.5, \"@type\": \"" + xsd + "decimal\"}, "
 				+ "\"" + X + "numDouble\": {\"@value\": 2, \"@type\": \"" + xsd + "double\"}, "
 				+ "\"" + X + "bool\": {\"@value\": true, \"@type\": \"" + xsd + "boolean\"}, "
-				+ "\"" + X + "compactType\": {\"@value\": \"0.35\", \"@type\": \"xsd:decimal\"}}");
+				+ "\"" + X + "compactType\": {\"@value\": \"0.35\", \"@type\": \"xsd:decimal\"}, "
+				+ "\"" + X + "indexed\": {\"@value\": \"x\", \"@index\": \"i\"}}");
 		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
 			ldStore.deSerialize(new ByteArrayInputStream(doc.toString().getBytes(StandardCharsets.UTF_8)), false);
 			Element dataset = (Element) SpdxModelFactory.inflateModelObject(ldStore, DATASET_ID,
@@ -698,6 +721,8 @@ public class JsonLDStoreTest {
 			assertEquals(new TypedLiteral("true", xsd + "boolean"), ldStore.getValue(extUri, new PropertyDescriptor("bool", X)).get());
 			// a compact datatype is kept as written (with a warning) - the SPDX context defines no xsd prefix
 			assertEquals(new TypedLiteral("0.35", "xsd:decimal"), ldStore.getValue(extUri, new PropertyDescriptor("compactType", X)).get());
+			// @index is not part of the RDF data and is ignored
+			assertEquals("x", ldStore.getValue(extUri, new PropertyDescriptor("indexed", X)).get());
 		}
 		assertStableRoundTrip(doc);
 
@@ -705,7 +730,6 @@ public class JsonLDStoreTest {
 			{"{\"@value\": \"hi\", \"@language\": \"en\"}", "@language"},
 			{"{\"@value\": \"hi\", \"@type\": \"@id\"}", "@id"},
 			{"{\"@value\": \"hi\", \"@type\": \"relative/type\"}", "relative/type"},
-			{"{\"@value\": \"hi\", \"@index\": \"i\"}", "@index"},
 		};
 		for (String[] r : rejected) {
 			try {
