@@ -310,9 +310,9 @@ public class JsonLDDeserializer {
 			boolean allowCustomType) throws InvalidSPDXAnalysisException, GenerationException {
 		TypedValue tv = getOrCreateCoreObject(node, graphIdToTypedValue, defaultSpecVersion, creationInfoIdToSpecVersion,
 				allowCustomType);
-		// An object with an ID can appear more than once (e.g., inlined in several places).  The properties
-		// of later occurrences are only added if the object does not already have a value for them,
-		// so that collection values are not repeated.
+		// An object with an ID can appear more than once (e.g., inlined in several places).  The occurrences
+		// are merged like in a JSON-LD node map: the values of later occurrences are added to the values
+		// already read.
 		boolean alreadyDeserialized = !deserializedObjectUris.add(tv.getObjectUri());
 		List<PropertyDescriptor> existingProperties = alreadyDeserialized ?
 				modelStore.getPropertyValueDescriptors(tv.getObjectUri()) : Collections.emptyList();
@@ -329,9 +329,8 @@ public class JsonLDDeserializer {
 					throw new InvalidSPDXAnalysisException("Unable to convert a JSON field name to a property", e);
 				}
 				if (existingProperties.contains(property)) {
-					continue;
-				}
-				if (field.getValue().isArray()) {
+					mergeValues(tv, field.getKey(), property, field.getValue(), creationInfoIdToSpecVersion, graphIdToTypedValue);
+				} else if (field.getValue().isArray()) {
 					for (JsonNode element : field.getValue()) {
 						modelStore.addValueToCollection(tv.getObjectUri(), property, toStoredObject(field.getKey(), element, tv.getSpecVersion(),
 								creationInfoIdToSpecVersion, graphIdToTypedValue));
@@ -345,6 +344,55 @@ public class JsonLDDeserializer {
 		return tv;
 	}
 
+
+	/**
+	 * Adds the values of a later occurrence of an object to the values already read for a property
+	 * <p>
+	 * Values already present are not added again.  An SPDX property with a single value can not
+	 * take a different value.  An extension property has no cardinality, so a single value becomes
+	 * a collection if a different value is found.
+	 * </p>
+	 * @param tv object
+	 * @param propertyName the name of the property in the JSON
+	 * @param property property
+	 * @param jsonValue value or array of values of the later occurrence
+	 * @param creationInfoIdToSpecVersion Map of creation info IDs to spec versions
+	 * @param graphIdToTypedValue map of top level Object URIs and IDs stored in the graph
+	 * @throws InvalidSPDXAnalysisException on a different value of a single-valued SPDX property
+	 * @throws GenerationException on errors obtaining the schema
+	 */
+	private void mergeValues(TypedValue tv, String propertyName, PropertyDescriptor property, JsonNode jsonValue,
+			Map<String, String> creationInfoIdToSpecVersion, Map<String, TypedValue> graphIdToTypedValue) throws InvalidSPDXAnalysisException, GenerationException {
+		List<JsonNode> elements = new ArrayList<>();
+		if (jsonValue.isArray()) {
+			jsonValue.forEach(elements::add);
+		} else {
+			elements.add(jsonValue);
+		}
+		String objectUri = tv.getObjectUri();
+		for (JsonNode element : elements) {
+			Object value = toStoredObject(propertyName, element, tv.getSpecVersion(), creationInfoIdToSpecVersion, graphIdToTypedValue);
+			if (modelStore.isCollectionProperty(objectUri, property)) {
+				if (!modelStore.collectionContains(objectUri, property, value)) {
+					modelStore.addValueToCollection(objectUri, property, value);
+				}
+				continue;
+			}
+			Optional<Object> existing = modelStore.getValue(objectUri, property);
+			if (existing.isPresent() && existing.get().equals(value)) {
+				continue;
+			}
+			if (!isExtensionProperty(propertyName, tv.getSpecVersion())) {
+				throw new InvalidSPDXAnalysisException("The object " + objectUri + " appears more than once with different values for the single-valued property "
+						+ propertyName + ": " + existing.orElse(null) + " and " + value);
+			}
+			modelStore.removeProperty(objectUri, property);
+			if (existing.isPresent()) {
+				modelStore.addValueToCollection(objectUri, property, existing.get());
+			}
+			modelStore.addValueToCollection(objectUri, property, value);
+		}
+	}
 
 	/**
 	 * Fetches the typed value for the core object from the map if exists, otherwise create, add to map
