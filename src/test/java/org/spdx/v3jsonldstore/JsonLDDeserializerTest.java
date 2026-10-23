@@ -32,6 +32,7 @@ import org.spdx.library.model.v3_0_1.software.SbomType;
 import org.spdx.library.model.v3_0_1.software.SpdxFile;
 import org.spdx.library.model.v3_0_1.software.SpdxPackage;
 import org.spdx.storage.IModelStore;
+import org.spdx.storage.PropertyDescriptor;
 import org.spdx.storage.simple.InMemSpdxStore;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -491,6 +492,50 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		}
 		List<String> verify = inflated.verify();
 		assertTrue(verify.isEmpty());
+	}
+
+	/**
+	 * Numbers in properties without a schema type (e.g., extension properties)
+	 * must keep their value: non-integer numbers must not be truncated to integers.
+	 */
+	@Test
+	public void testDeserializeExtensionPropertyNumbers() throws GenerationException, InvalidSPDXAnalysisException {
+		JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
+
+		String specVersion = "3.0.1";
+		String personSpdxId = "https://this/is/a/person";
+		String extNamespace = "https://example.org/spdx3-ext/test/";
+
+		ObjectNode creationInfoNode = mapper.createObjectNode();
+		creationInfoNode.set("type", new TextNode("CreationInfo"));
+		creationInfoNode.set("specVersion", new TextNode(specVersion));
+		creationInfoNode.set("created", new TextNode("2024-07-18T12:00:00Z"));
+		ArrayNode createdBysNode = mapper.createArrayNode();
+		createdBysNode.add(new TextNode(personSpdxId));
+		creationInfoNode.set("createdBy", createdBysNode);
+		ObjectNode personNode = mapper.createObjectNode();
+		personNode.set("type", new TextNode("Person"));
+		personNode.set("spdxId", new TextNode(personSpdxId));
+		personNode.set("name", new TextNode("Person Name"));
+		personNode.set("creationInfo", creationInfoNode);
+		personNode.put(extNamespace + "fraction", 0.35);
+		personNode.put(extNamespace + "negative", -2.5);
+		personNode.put(extNamespace + "count", 7);
+		personNode.put(extNamespace + "big", 12345678901L);
+
+		deserializer.deserializeElement(personNode);
+
+		Object fraction = modelStore.getValue(personSpdxId, new PropertyDescriptor("fraction", extNamespace)).get();
+		assertTrue(fraction instanceof Double);
+		assertEquals(0.35, (Double) fraction, 0.0);
+		Object negative = modelStore.getValue(personSpdxId, new PropertyDescriptor("negative", extNamespace)).get();
+		assertTrue(negative instanceof Double);
+		assertEquals(-2.5, (Double) negative, 0.0);
+		Object count = modelStore.getValue(personSpdxId, new PropertyDescriptor("count", extNamespace)).get();
+		assertEquals(Integer.valueOf(7), count);
+		Object big = modelStore.getValue(personSpdxId, new PropertyDescriptor("big", extNamespace)).get();
+		assertTrue(big instanceof Double);
+		assertEquals(12345678901.0, (Double) big, 0.0);
 	}
 
 }

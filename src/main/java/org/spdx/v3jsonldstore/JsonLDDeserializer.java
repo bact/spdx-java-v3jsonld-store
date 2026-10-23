@@ -322,14 +322,21 @@ public class JsonLDDeserializer {
 			}
 			case NULL: throw new InvalidSPDXAnalysisException("Can not convert a JSON NULL to a stored object");
 			case NUMBER: {
-				if (propertyType.isEmpty() || JsonLDSchema.INTEGER_TYPES.contains(propertyType.get())) {
+				if (propertyType.isEmpty()) {
+					// No schema type (e.g., an extension property) - preserve the JSON number
+					if (value.isIntegralNumber() && value.canConvertToInt()) {
+						return value.asInt();
+					} else {
+						return value.asDouble();
+					}
+				} else if (JsonLDSchema.INTEGER_TYPES.contains(propertyType.get())) {
 					return value.asInt();
 				} else if (JsonLDSchema.DOUBLE_TYPES.contains(propertyType.get())) {
 					return value.asDouble();
 				} else if (JsonLDSchema.STRING_TYPES.contains(propertyType.get())) {
 					return value.asText();
 				} else {
-					throw new InvalidSPDXAnalysisException("Type mismatch.  Expecting "+propertyType+" but was a JSON Boolean");
+					throw new InvalidSPDXAnalysisException("Type mismatch.  Expecting "+propertyType+" but was a JSON Number");
 				}
 			}
 			case OBJECT: return deserializeCoreObject(value, specVersion, creationInfoIdToSpecVersion, graphIdToTypedValue);

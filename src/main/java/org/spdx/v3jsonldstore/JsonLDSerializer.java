@@ -326,13 +326,13 @@ public class JsonLDSerializer {
 					ArrayNode an = jsonMapper.createArrayNode();
 					Iterator<Object> iter = spdxDocument.getModelStore().listValues(spdxDocument.getObjectUri(), prop);
 					while (iter.hasNext()) {
-						an.add(objectToJsonNode(iter.next(), spdxDocument.getModelStore(), idToSerializedId));
+						an.add(objectToJsonNode(iter.next(), prop, spdxDocument.getModelStore(), idToSerializedId));
 					}
 					retval.set(propertyToJsonLdPropName(prop), an);
 				} else {
 					Optional<Object> val = spdxDocument.getModelStore().getValue(spdxDocument.getObjectUri(), prop);
 					if (val.isPresent()) {
-						retval.set(propertyToJsonLdPropName(prop), objectToJsonNode(val.get(), spdxDocument.getModelStore(), idToSerializedId));
+						retval.set(propertyToJsonLdPropName(prop), objectToJsonNode(val.get(), prop, spdxDocument.getModelStore(), idToSerializedId));
 					}
 				}
 			}
@@ -449,13 +449,13 @@ public class JsonLDSerializer {
 				ArrayNode an = jsonMapper.createArrayNode();
 				Iterator<Object> iter = modelObject.getModelStore().listValues(modelObject.getObjectUri(), prop);
 				while (iter.hasNext()) {
-					an.add(objectToJsonNode(iter.next(), modelObject.getModelStore(), idToSerializedId));
+					an.add(objectToJsonNode(iter.next(), prop, modelObject.getModelStore(), idToSerializedId));
 				}
 				retval.set(propertyToJsonLdPropName(prop), an);
 			} else {
 				Optional<Object> val = modelObject.getModelStore().getValue(modelObject.getObjectUri(), prop);
 				if (val.isPresent()) {
-					retval.set(propertyToJsonLdPropName(prop), objectToJsonNode(val.get(), modelObject.getModelStore(), idToSerializedId));
+					retval.set(propertyToJsonLdPropName(prop), objectToJsonNode(val.get(), prop, modelObject.getModelStore(), idToSerializedId));
 				}
 			}
 		}
@@ -464,12 +464,20 @@ public class JsonLDSerializer {
 
 	/**
 	 * @param prop property
+	 * @return true if the property is defined in an SPDX namespace, false if it is an extension property
+	 */
+	private static boolean isSpdxProperty(PropertyDescriptor prop) {
+		//TODO: Add an SPDX general namespace prefix to SpdxConstantsV3 we can use for comparison
+		return prop.getNameSpace().startsWith("https://spdx.org/rdf/");
+	}
+
+	/**
+	 * @param prop property
 	 * @return JSON-LD property name per the SPDX 3.X JSON-LD spec
 	 */
 	private String propertyToJsonLdPropName(PropertyDescriptor prop) {
-		if (prop.getNameSpace().startsWith("https://spdx.org/rdf/")) {
+		if (isSpdxProperty(prop)) {
 			// we'll assume this is an SPDX standard property URL
-			//TODO: Add an SPDX general namespace prefix to SpdxConstantsV3 we can use for comparison
 			String profile = prop.getNameSpace().substring(0, prop.getNameSpace().length()-1);
 			profile = profile.substring(profile.lastIndexOf('/') + 1);
 			if ("Core".equals(profile)) {
@@ -488,12 +496,13 @@ public class JsonLDSerializer {
 	 * Converts an object to a JSON node representation based on the SPDX 3.X schema
 	 *
 	 * @param object object to translate to a JSON node
+	 * @param prop property the object is a value of
 	 * @param fromModelStore modelStore to retrieve the property information from
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
 	 * @return object converted to a JSON node based on the SPDX 3.X schema
 	 * @throws InvalidSPDXAnalysisException on SPDX parsing errors
 	 */
-	private JsonNode objectToJsonNode(Object object, IModelStore fromModelStore, Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
+	private JsonNode objectToJsonNode(Object object, PropertyDescriptor prop, IModelStore fromModelStore, Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
 		if (object instanceof TypedValue) {
 			return typedValueToJsonNode((TypedValue)object, fromModelStore, idToSerializedId);
 		} else if (object instanceof String) {
@@ -503,7 +512,12 @@ public class JsonLDSerializer {
 		} else if (object instanceof Integer) {
 			return new IntNode((Integer) object);
 		} else if (object instanceof Double) {
-			return new TextNode(object.toString());
+			if (isSpdxProperty(prop)) {
+				return new TextNode(object.toString());
+			} else {
+				// extension property - keep the JSON number type
+				return new DoubleNode((Double) object);
+			}
 		} else if (object instanceof IndividualUriValue) {
 			// it's an Enum, Individual or external element
 			String individualUri = ((IndividualUriValue)object).getIndividualURI();
@@ -562,13 +576,13 @@ public class JsonLDSerializer {
 				ArrayNode an = jsonMapper.createArrayNode();
 				Iterator<Object> iter = fromModelStore.listValues(tv.getObjectUri(), prop);
 				while (iter.hasNext()) {
-					an.add(objectToJsonNode(iter.next(), fromModelStore, idToSerializedId));
+					an.add(objectToJsonNode(iter.next(), prop, fromModelStore, idToSerializedId));
 				}
 				retval.set(propertyToJsonLdPropName(prop), an);
 			} else {
 				Optional<Object> val = fromModelStore.getValue(tv.getObjectUri(), prop);
 				if (val.isPresent()) {
-					retval.set(propertyToJsonLdPropName(prop), objectToJsonNode(val.get(), fromModelStore, idToSerializedId));
+					retval.set(propertyToJsonLdPropName(prop), objectToJsonNode(val.get(), prop, fromModelStore, idToSerializedId));
 				}
 			}
 		}

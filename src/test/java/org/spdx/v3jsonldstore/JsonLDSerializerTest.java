@@ -30,6 +30,7 @@ import org.spdx.library.model.v3_0_1.security.Vulnerability;
 import org.spdx.library.model.v3_0_1.software.SpdxFile;
 import org.spdx.library.model.v3_0_1.software.SpdxPackage;
 import org.spdx.storage.IModelStore;
+import org.spdx.storage.PropertyDescriptor;
 import org.spdx.storage.IModelStore.IdType;
 import org.spdx.storage.simple.InMemSpdxStore;
 
@@ -461,5 +462,39 @@ public class JsonLDSerializerTest {
 		assertEquals(relUri, resultElements.get(0).get("spdxId").asText());
 		JsonNode scoreResult = resultElements.get(0).get("security_score");
 		assertEquals(score, scoreResult.asDouble(), 0.00001);
+	}
+
+	/**
+	 * Non-integer numbers in extension properties must be serialized as JSON numbers
+	 */
+	@Test
+	public void testSerializeExtensionPropertyDouble() throws GenerationException, InvalidSPDXAnalysisException {
+		JsonLDSerializer serializer = new JsonLDSerializer(mapper, true, false, SpdxModelFactory.getLatestSpecVersion(), modelStore);
+		String prefix = "http://test.uri#";
+		String personUri = prefix + "PERSON";
+		String extNamespace = "https://example.org/spdx3-ext/test/";
+		ModelCopyManager copyManager = new ModelCopyManager();
+		Person person = new Person(modelStore, personUri, copyManager, true, prefix);
+		CreationInfo creationInfo = person.createCreationInfo(modelStore.getNextId(IdType.Anonymous))
+				.setCreated("2024-07-22T16:01:15Z")
+				.setSpecVersion("3.0.1")
+				.build();
+		creationInfo.getCreatedBys().add(person);
+		person.setCreationInfo(creationInfo);
+		person.setName("Person Name");
+		modelStore.setValue(personUri, new PropertyDescriptor("fraction", extNamespace), 0.35);
+
+		JsonNode result = serializer.serialize(person);
+		JsonNode personResult = null;
+		for (JsonNode element : result.get("@graph")) {
+			if ("Person".equals(element.get("type").asText())) {
+				personResult = element;
+			}
+		}
+		assertNotNull(personResult);
+		JsonNode fraction = personResult.get(extNamespace + "fraction");
+		assertNotNull(fraction);
+		assertTrue(fraction.isNumber());
+		assertEquals(0.35, fraction.asDouble(), 0.0);
 	}
 }
