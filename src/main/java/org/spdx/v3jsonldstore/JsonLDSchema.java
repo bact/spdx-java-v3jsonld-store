@@ -490,6 +490,23 @@ public class JsonLDSchema {
 	}
 
 	/**
+	 * Expands a compact IRI (prefix:suffix) whose prefix is defined in the JSON-LD context
+	 * @param value IRI, compact IRI, or other value
+	 * @return the expanded IRI if the value is a compact IRI with a prefix defined in the context, otherwise the value
+	 */
+	public String expandCompactIri(String value) {
+		int colon = value.indexOf(':');
+		if (colon <= 0 || value.startsWith("//", colon + 1)) {
+			return value;
+		}
+		JsonNode prefix = contexts.get(value.substring(0, colon));
+		if (Objects.nonNull(prefix) && prefix.isTextual()) {
+			return prefix.asText() + value.substring(colon + 1);
+		}
+		return value;
+	}
+
+	/**
 	 * Returns the SPDX model {@link PropertyDescriptor} for the given JSON field name
 	 * @param fieldName name of a JSON field / property
 	 * @return the SPDX model property descriptor for the JSON property

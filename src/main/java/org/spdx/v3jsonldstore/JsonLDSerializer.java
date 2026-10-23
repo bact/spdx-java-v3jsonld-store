@@ -160,6 +160,12 @@ public class JsonLDSerializer {
 	private final String specVersion;
 	private final JsonLDSchema jsonLDSchema;
 	private final boolean useExternalListedElements;
+	/**
+	 * Objects inlined in the current serialization, by object URI.  An object is inlined once and
+	 * referenced by its ID in all other places.
+	 */
+	private final Map<String, ObjectNode> inlinedNodes = new HashMap<>();
+	private int blankNodeCounter = 0;
 
 	/**
 	 * Serializer to serialize a model store containing SPDX 3 elements
@@ -191,7 +197,9 @@ public class JsonLDSerializer {
 	 * @return the root node of the JSON serialization
 	 * @throws InvalidSPDXAnalysisException on errors retrieving the information for serialization
 	 */
-	public JsonNode serialize(@Nullable CoreModelObject objectToSerialize) throws InvalidSPDXAnalysisException {
+	public synchronized JsonNode serialize(@Nullable CoreModelObject objectToSerialize) throws InvalidSPDXAnalysisException {
+		inlinedNodes.clear();
+		blankNodeCounter = 0;
 		if (Objects.isNull(objectToSerialize)) {
 			return serializeAllObjects();
 		} else if (objectToSerialize instanceof SpdxDocument) {
@@ -649,6 +657,14 @@ public class JsonLDSerializer {
 		} else if (!extensionProperty && pretty && jsonLDSchema.getAnyLicenseInfoTypes().contains(tv.getType())) {
 			AnyLicenseInfo licenseInfo = (AnyLicenseInfo)ModelRegistry.getModelRegistry().inflateModelObject(fromModelStore, tv.getObjectUri(), tv.getType(), new ModelCopyManager(), tv.getSpecVersion(), false, "");
 			return new TextNode(licenseInfo.toString());
+		} else if (inlinedNodes.containsKey(tv.getObjectUri())) {
+			// already inlined - reference it, giving a blank node an identifier if needed
+			ObjectNode inlined = inlinedNodes.get(tv.getObjectUri());
+			if (!inlined.has("@id")) {
+				inlined.set("@id", new TextNode("_:node" + blankNodeCounter++));
+			}
+			String id = inlined.get("@id").asText();
+			return extensionProperty ? idReference(id) : new TextNode(id);
 		} else {
 			// we should inline the object
 			return inlinedJsonNode(tv, fromModelStore, idToSerializedId);
@@ -678,6 +694,7 @@ public class JsonLDSerializer {
 	private JsonNode inlinedJsonNode(TypedValue tv, IModelStore fromModelStore,
 			Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
 		ObjectNode retval = jsonMapper.createObjectNode();
+		inlinedNodes.put(tv.getObjectUri(), retval);
 		retval.set("type", new TextNode(typeToJsonType(tv.getType())));
 		if (!fromModelStore.isAnon(tv.getObjectUri())) {
 			// keep the IRI of an inlined object which is not a blank node

@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -21,6 +22,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.spdx.core.IndividualUriValue;
 import org.spdx.core.InvalidSPDXAnalysisException;
+import org.spdx.core.ModelRegistry;
 import org.spdx.core.TypedLiteral;
 import org.spdx.core.TypedValue;
 import org.spdx.library.ModelCopyManager;
@@ -47,6 +49,8 @@ import org.spdx.storage.simple.InMemSpdxStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * @author Gary O'Neall
@@ -56,6 +60,10 @@ public class JsonLDStoreTest {
 	private static final String NO_DOCUMENT_FILE = "no_document.json";
 	private static final String YOCTO_SPDX_FILE = "core-image-minimal.json";
 	private static final String CUSTOM_EXTENSION_FILE = "custom_extension.json";
+	private static final String EXTENSION_MINIMAL_FILE = "extension_minimal.json";
+	private static final String SHARED_IRI_EXTERNAL_REF_FILE = "shared_iri_external_ref.json";
+	private static final String DATASET_ID = "https://example.org/spdx/dataset/instruct-mix";
+	private static final String X = "https://example.org/x/";
 	private static final String EXT_NS = "https://example.org/spdx3-ext/synthetic-data/";
 	private static final String SYNTHETIC_DATA_EXTENSION_TYPE = EXT_NS + "SyntheticDataExtension";
 	private static final String XSD_DECIMAL = "http://www.w3.org/2001/XMLSchema#decimal";
@@ -420,6 +428,249 @@ public class JsonLDStoreTest {
 					JsonNode outExt = findExtensionNode(outElement, inExt.get("type").asText());
 					assertEquals(inExt, outExt);
 				}
+			}
+		}
+	}
+
+	/**
+	 * Reads a test resource as JSON
+	 */
+	private JsonNode readResource(String resource) throws Exception {
+		try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
+			return new ObjectMapper().readTree(is);
+		}
+	}
+
+	/**
+	 * @return the minimal extension document with the extension of the dataset replaced by the extension object
+	 */
+	private ObjectNode documentWithExtension(String extensionJson) throws Exception {
+		ObjectNode doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
+		ObjectNode dataset = (ObjectNode) findGraphNode(doc, DATASET_ID);
+		dataset.putArray("extension").add(new ObjectMapper().readTree(extensionJson));
+		return doc;
+	}
+
+	/**
+	 * Deserializes the document into a new store, then serializes it
+	 */
+	private JsonNode roundTrip(JsonNode doc) throws Exception {
+		try (JsonLDStore ldStore = new JsonLDStore(new InMemSpdxStore())) {
+			SpdxDocument spdxDoc = ldStore.deSerialize(new ByteArrayInputStream(doc.toString().getBytes(StandardCharsets.UTF_8)), false);
+			List<String> verify = spdxDoc.verify();
+			assertTrue(verify.toString(), verify.isEmpty());
+			try (ByteArrayOutputStream bas = new ByteArrayOutputStream()) {
+				ldStore.serialize(bas);
+				return new ObjectMapper().readTree(bas.toString());
+			}
+		}
+	}
+
+	/**
+	 * @return the JSON with arrays sorted, since JSON-LD arrays are unordered
+	 */
+	private static JsonNode canonical(JsonNode node) {
+		if (node.isArray()) {
+			List<JsonNode> items = new ArrayList<>();
+			node.forEach(item -> items.add(canonical(item)));
+			items.sort((a, b) -> a.toString().compareTo(b.toString()));
+			ArrayNode retval = new ObjectMapper().createArrayNode();
+			retval.addAll(items);
+			return retval;
+		} else if (node.isObject()) {
+			ObjectNode retval = new ObjectMapper().createObjectNode();
+			node.properties().forEach(field -> retval.set(field.getKey(), canonical(field.getValue())));
+			return retval;
+		} else {
+			return node;
+		}
+	}
+
+	/**
+	 * Deserializing and serializing the result again must not change it
+	 */
+	private JsonNode assertStableRoundTrip(JsonNode doc) throws Exception {
+		JsonNode first = roundTrip(doc);
+		JsonNode second = roundTrip(first);
+		assertEquals(canonical(first), canonical(second));
+		return first;
+	}
+
+	/**
+	 * @return the number of values of the property in all objects in the JSON
+	 */
+	private static int countValues(JsonNode node, String property) {
+		int count = 0;
+		if (node.isArray()) {
+			for (JsonNode item : node) {
+				count += countValues(item, property);
+			}
+		} else if (node.isObject()) {
+			for (java.util.Map.Entry<String, JsonNode> field : node.properties()) {
+				if (field.getKey().equals(property)) {
+					count += field.getValue().isArray() ? field.getValue().size() : 1;
+				} else {
+					count += countValues(field.getValue(), property);
+				}
+			}
+		}
+		return count;
+	}
+
+	/**
+	 * An object with an IRI used in several places must keep its values once
+	 */
+	@Test
+	public void testSharedIriObjectRoundTrip() throws Exception {
+		JsonNode input = readResource(SHARED_IRI_EXTERNAL_REF_FILE);
+		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
+			ldStore.deSerialize(new ByteArrayInputStream(input.toString().getBytes(StandardCharsets.UTF_8)), false);
+			List<Object> locators = new ArrayList<>();
+			ldStore.listValues("https://example.org/er1", SpdxConstantsV3.PROP_LOCATOR).forEachRemaining(locators::add);
+			assertEquals(2, locators.size());
+		}
+		JsonNode output = assertStableRoundTrip(input);
+		// inlined once, referenced elsewhere
+		assertEquals(2, countValues(output, "locator"));
+		assertEquals("https://example.org/er1", findGraphNode(output, "https://example.org/spdx/agent/alice").get("externalRef").get(0).isTextual() ?
+				findGraphNode(output, "https://example.org/spdx/agent/alice").get("externalRef").get(0).asText() :
+				findGraphNode(output, DATASET_ID).get("externalRef").get(0).asText());
+
+		// custom nodes
+		JsonNode customOutput = assertStableRoundTrip(documentWithExtension("{\"type\": \"" + X + "T\", "
+				+ "\"" + X + "a\": {\"type\": \"" + X + "N\", \"@id\": \"https://example.org/n1\", \"" + X + "v\": [1, 2]}, "
+				+ "\"" + X + "b\": {\"type\": \"" + X + "N\", \"@id\": \"https://example.org/n1\", \"" + X + "v\": [1, 2]}}"));
+		assertEquals(2, countValues(customOutput, X + "v"));
+		JsonNode ext = findGraphNode(customOutput, DATASET_ID).get("extension").get(0);
+		JsonNode inlined = ext.get(X + "a").has(X + "v") ? ext.get(X + "a") : ext.get(X + "b");
+		JsonNode reference = ext.get(X + "a").has(X + "v") ? ext.get(X + "b") : ext.get(X + "a");
+		assertEquals("https://example.org/n1", inlined.get("@id").asText());
+		assertEquals(new ObjectMapper().readTree("{\"@id\": \"https://example.org/n1\"}"), reference);
+	}
+
+	/**
+	 * Blank node references inside extension values
+	 */
+	@Test
+	public void testBlankNodeReferenceInExtension() throws Exception {
+		JsonNode doc = documentWithExtension("{\"type\": \"" + X + "T\", "
+				+ "\"" + X + "a\": {\"type\": \"" + X + "N\", \"@id\": \"_:n1\", \"" + X + "v\": 1}, "
+				+ "\"" + X + "b\": {\"@id\": \"_:n1\"}}");
+		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
+			ldStore.deSerialize(new ByteArrayInputStream(doc.toString().getBytes(StandardCharsets.UTF_8)), false);
+			Element dataset = (Element) SpdxModelFactory.inflateModelObject(ldStore, DATASET_ID,
+					SpdxConstantsV3.DATASET_DATASET_PACKAGE, null, "3.0.1", false, "");
+			String extUri = dataset.getExtensions().iterator().next().getObjectUri();
+			Object a = ldStore.getValue(extUri, new PropertyDescriptor("a", X)).get();
+			Object b = ldStore.getValue(extUri, new PropertyDescriptor("b", X)).get();
+			assertTrue(a instanceof TypedValue);
+			assertEquals(a, b);
+		}
+		// a blank node referenced twice is written once with a blank node identifier
+		JsonNode output = assertStableRoundTrip(doc);
+		assertEquals(1, countValues(output, X + "v"));
+		JsonNode ext = findGraphNode(output, DATASET_ID).get("extension").get(0);
+		JsonNode inlined = ext.get(X + "a").has(X + "v") ? ext.get(X + "a") : ext.get(X + "b");
+		JsonNode reference = ext.get(X + "a").has(X + "v") ? ext.get(X + "b") : ext.get(X + "a");
+		assertTrue(inlined.get("@id").asText().startsWith("_:"));
+		assertEquals(1, reference.size());
+		assertEquals(inlined.get("@id"), reference.get("@id"));
+
+		// a blank node reference to an unknown node is an error
+		try {
+			roundTrip(documentWithExtension("{\"type\": \"" + X + "T\", \"" + X + "a\": {\"@id\": \"_:nope\"}}"));
+			fail("Unknown blank node reference");
+		} catch (InvalidSPDXAnalysisException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("_:nope"));
+		}
+	}
+
+	/**
+	 * Custom types are only accepted for absolute IRIs outside of the SPDX namespace, where SPDX allows an extension
+	 */
+	@Test
+	public void testCustomTypeRejected() throws Exception {
+		String[] rejectedTypes = new String[] {
+				"https://spdx.org/rdf/3.0.1/terms/Extension/Foo",	// unknown type in the SPDX namespace
+				"spdx:Extension/Foo",	// compact IRI expanding to the SPDX namespace
+				"FooExtension",	// not an absolute IRI
+				"_:T",	// blank node identifier
+		};
+		for (String type : rejectedTypes) {
+			try {
+				roundTrip(documentWithExtension("{\"type\": \"" + type + "\", \"" + X + "a\": 1}"));
+				fail("Type should be rejected: " + type);
+			} catch (InvalidSPDXAnalysisException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains("Missing type"));
+			}
+		}
+		// a custom type under a property which is not an extension
+		ObjectNode doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
+		((ObjectNode) findGraphNode(doc, DATASET_ID)).putArray("verifiedUsing").add(
+				new ObjectMapper().readTree("{\"type\": \"" + X + "H\", \"" + X + "a\": 1}"));
+		try {
+			roundTrip(doc);
+			fail("Custom type under verifiedUsing should be rejected");
+		} catch (InvalidSPDXAnalysisException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("Missing type"));
+		}
+		// a custom type at the top level of the graph
+		doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
+		((ArrayNode) doc.get("@graph")).add(new ObjectMapper().readTree(
+				"{\"type\": \"" + X + "T\", \"@id\": \"https://example.org/top\", \"" + X + "a\": 1}"));
+		try {
+			roundTrip(doc);
+			fail("Custom type at the top level should be rejected");
+		} catch (InvalidSPDXAnalysisException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("Missing type"));
+		}
+		// accepted custom types do not each need a registration
+		roundTrip(documentWithExtension("{\"type\": \"urn:example:T\", \"" + X + "a\": 1}"));
+		assertEquals(GenericExtension.class, ModelRegistry.getModelRegistry().getDefaultExtensionType());
+	}
+
+	/**
+	 * JSON-LD value objects in extension properties
+	 */
+	@Test
+	public void testExtensionValueObjects() throws Exception {
+		String xsd = "http://www.w3.org/2001/XMLSchema#";
+		JsonNode doc = documentWithExtension("{\"type\": \"" + X + "T\", "
+				+ "\"" + X + "noType\": {\"@value\": 1.5}, "
+				+ "\"" + X + "numInteger\": {\"@value\": 1e3, \"@type\": \"" + xsd + "integer\"}, "
+				+ "\"" + X + "numDecimal\": {\"@value\": 0.5, \"@type\": \"" + xsd + "decimal\"}, "
+				+ "\"" + X + "numDouble\": {\"@value\": 2, \"@type\": \"" + xsd + "double\"}, "
+				+ "\"" + X + "bool\": {\"@value\": true, \"@type\": \"" + xsd + "boolean\"}, "
+				+ "\"" + X + "compactType\": {\"@value\": \"0.35\", \"@type\": \"xsd:decimal\"}}");
+		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
+			ldStore.deSerialize(new ByteArrayInputStream(doc.toString().getBytes(StandardCharsets.UTF_8)), false);
+			Element dataset = (Element) SpdxModelFactory.inflateModelObject(ldStore, DATASET_ID,
+					SpdxConstantsV3.DATASET_DATASET_PACKAGE, null, "3.0.1", false, "");
+			String extUri = dataset.getExtensions().iterator().next().getObjectUri();
+			// @value without @type is the plain value
+			assertEquals(1.5d, ldStore.getValue(extUri, new PropertyDescriptor("noType", X)).get());
+			// numbers with a @type use the canonical lexical form of the JSON-LD 1.1 API section 8.2
+			assertEquals(new TypedLiteral("1000", xsd + "integer"), ldStore.getValue(extUri, new PropertyDescriptor("numInteger", X)).get());
+			assertEquals(new TypedLiteral("5.0E-1", xsd + "decimal"), ldStore.getValue(extUri, new PropertyDescriptor("numDecimal", X)).get());
+			assertEquals(new TypedLiteral("2.0E0", xsd + "double"), ldStore.getValue(extUri, new PropertyDescriptor("numDouble", X)).get());
+			assertEquals(new TypedLiteral("true", xsd + "boolean"), ldStore.getValue(extUri, new PropertyDescriptor("bool", X)).get());
+			// a compact datatype is kept as written (with a warning) - the SPDX context defines no xsd prefix
+			assertEquals(new TypedLiteral("0.35", "xsd:decimal"), ldStore.getValue(extUri, new PropertyDescriptor("compactType", X)).get());
+		}
+		assertStableRoundTrip(doc);
+
+		String[][] rejected = new String[][] {
+			{"{\"@value\": \"hi\", \"@language\": \"en\"}", "@language"},
+			{"{\"@value\": \"hi\", \"@type\": \"@id\"}", "@id"},
+			{"{\"@value\": \"hi\", \"@type\": \"relative/type\"}", "relative/type"},
+			{"{\"@value\": \"hi\", \"@index\": \"i\"}", "@index"},
+		};
+		for (String[] r : rejected) {
+			try {
+				roundTrip(documentWithExtension("{\"type\": \"" + X + "T\", \"" + X + "a\": " + r[0] + "}"));
+				fail("Value object should be rejected: " + r[0]);
+			} catch (InvalidSPDXAnalysisException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains(r[1]));
 			}
 		}
 	}
