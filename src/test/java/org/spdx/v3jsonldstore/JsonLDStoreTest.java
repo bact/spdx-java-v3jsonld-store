@@ -13,7 +13,9 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.After;
@@ -502,6 +504,46 @@ public class JsonLDStoreTest {
 		JsonNode reference = ext.get(X + "a").has(X + "v") ? ext.get(X + "b") : ext.get(X + "a");
 		assertEquals("https://example.org/n1", inlined.get("@id").asText());
 		assertEquals(new ObjectMapper().readTree("{\"@id\": \"https://example.org/n1\"}"), reference);
+	}
+
+	/**
+	 * The occurrences of an object with an IRI are merged like a JSON-LD node map: the values
+	 * of all occurrences are kept
+	 */
+	@Test
+	public void testSharedIriObjectDifferentValues() throws Exception {
+		ObjectNode input = (ObjectNode) readResource(SHARED_IRI_EXTERNAL_REF_FILE);
+		ObjectNode first = (ObjectNode) findGraphNode(input, "https://example.org/spdx/agent/alice").get("externalRef").get(0);
+		ObjectNode second = (ObjectNode) findGraphNode(input, DATASET_ID).get("externalRef").get(0);
+		first.putArray("locator").add("a");
+		second.putArray("locator").add("b").add("c");
+		// the same value of a single-valued property is not a conflict
+		first.put("comment", "same");
+		second.put("comment", "same");
+		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
+			ldStore.deSerialize(new ByteArrayInputStream(input.toString().getBytes(StandardCharsets.UTF_8)), false);
+			Set<Object> locators = new HashSet<>();
+			ldStore.listValues("https://example.org/er1", SpdxConstantsV3.PROP_LOCATOR).forEachRemaining(locators::add);
+			assertEquals(new HashSet<>(Arrays.asList("a", "b", "c")), locators);
+			assertEquals("same", ldStore.getValue("https://example.org/er1", SpdxConstantsV3.PROP_COMMENT).get());
+		}
+		assertEquals(3, countValues(assertStableRoundTrip(input), "locator"));
+
+		// a different value of a single-valued SPDX property is an error
+		second.put("comment", "different");
+		try {
+			roundTrip(input);
+			fail("Different values of a single-valued property");
+		} catch (InvalidSPDXAnalysisException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("https://example.org/er1") && e.getMessage().contains("comment"));
+		}
+
+		// extension properties have no cardinality - the values are merged
+		JsonNode customOutput = assertStableRoundTrip(documentWithExtension("{\"type\": \"" + X + "T\", "
+				+ "\"" + X + "a\": {\"type\": \"" + X + "N\", \"@id\": \"https://example.org/n1\", \"" + X + "v\": 1, \"" + X + "w\": [1]}, "
+				+ "\"" + X + "b\": {\"type\": \"" + X + "N\", \"@id\": \"https://example.org/n1\", \"" + X + "v\": 2, \"" + X + "w\": [1, 2]}}"));
+		assertEquals(2, countValues(customOutput, X + "v"));
+		assertEquals(2, countValues(customOutput, X + "w"));
 	}
 
 	/**
