@@ -578,6 +578,37 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		assertEquals(1.0d, getExtValue(personSpdxId, extNamespace, "tinyFraction"));
 	}
 
+	/**
+	 * SPDX integer properties must not truncate or wrap numbers
+	 */
+	@Test
+	public void testDeserializeSpdxIntegerProperty() throws Exception {
+		assertEquals(Integer.valueOf(3), deserializeBeginIntegerRange("3"));
+		assertEquals(Integer.valueOf(3), deserializeBeginIntegerRange("3.0"));
+		assertEquals(Integer.valueOf(Integer.MAX_VALUE), deserializeBeginIntegerRange("2147483647"));
+		for (String invalid : new String[] {"1.5", "2147483648", "-2147483649", "1e400", "1e-400"}) {
+			try {
+				deserializeBeginIntegerRange(invalid);
+				fail("Expected an error for "+invalid);
+			} catch (InvalidSPDXAnalysisException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains("beginIntegerRange"));
+			}
+		}
+	}
+
+	private Object deserializeBeginIntegerRange(String number) throws Exception {
+		modelStore = new InMemSpdxStore();
+		String snippetId = "https://this/is/a/snippet";
+		ObjectNode snippetNode = (ObjectNode) JsonLDStore.JSON_MAPPER.readTree("{"
+				+ "\"type\": \"software_Snippet\", \"spdxId\": \""+snippetId+"\","
+				+ "\"creationInfo\": {\"type\": \"CreationInfo\", \"specVersion\": \"3.0.1\","
+				+ "\"created\": \"2024-07-18T12:00:00Z\", \"createdBy\": [\"https://this/is/a/person\"]},"
+				+ "\"software_byteRange\": {\"type\": \"PositiveIntegerRange\", \"beginIntegerRange\": "+number+", \"endIntegerRange\": 5}}");
+		new JsonLDDeserializer(modelStore).deserializeElement(snippetNode);
+		Object range = modelStore.getValue(snippetId, SpdxConstantsV3.PROP_BYTE_RANGE).get();
+		return modelStore.getValue(((TypedValue) range).getObjectUri(), SpdxConstantsV3.PROP_BEGIN_INTEGER_RANGE).get();
+	}
+
 	private ObjectNode personWithExtensionNumbers(String personSpdxId, String numbersJson, String extNamespace) throws Exception {
 		ObjectNode personNode = (ObjectNode) JsonLDStore.JSON_MAPPER.readTree("{"
 				+ "\"type\": \"Person\", \"spdxId\": \""+personSpdxId+"\", \"name\": \"Person Name\","

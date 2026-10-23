@@ -336,7 +336,7 @@ public class JsonLDDeserializer {
 					// No schema type (e.g., an extension property) - preserve the JSON number
 					return untypedJsonNumberToStoredValue(value);
 				} else if (JsonLDSchema.INTEGER_TYPES.contains(propertyType.get())) {
-					return value.asInt();
+					return jsonNumberToInt(propertyName, value);
 				} else if (JsonLDSchema.DOUBLE_TYPES.contains(propertyType.get())) {
 					return value.asDouble();
 				} else if (JsonLDSchema.STRING_TYPES.contains(propertyType.get())) {
@@ -353,6 +353,24 @@ public class JsonLDDeserializer {
 			case POJO:
 			default: throw new InvalidSPDXAnalysisException("Unsupported JSON node type: "+ value);
 			}
+	}
+
+	/**
+	 * @param propertyName name of the SPDX integer property
+	 * @param value JSON number
+	 * @return the value as an int
+	 * @throws InvalidSPDXAnalysisException if the value is not an integer or is outside of the int range
+	 */
+	static int jsonNumberToInt(String propertyName, JsonNode value) throws InvalidSPDXAnalysisException {
+		if (value.isIntegralNumber() || Double.isFinite(value.asDouble())) {
+			try {
+				return value.decimalValue().intValueExact();
+			} catch (ArithmeticException e) {
+				// not an integer, or out of range
+			}
+		}
+		throw new InvalidSPDXAnalysisException("Invalid value " + value.asText() + " for the integer property " +
+				propertyName + ": the value must be an integer between " + Integer.MIN_VALUE + " and " + Integer.MAX_VALUE);
 	}
 
 	/**
