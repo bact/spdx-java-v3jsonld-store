@@ -367,6 +367,10 @@ public class JsonLDDeserializer {
 		if (value.isIntegralNumber()) {
 			return integerToStoredValue(value.bigIntegerValue());
 		}
+		if (!Double.isFinite(value.asDouble())) {
+			// outside of the double range (e.g., 1e400)
+			return value.asDouble();
+		}
 		BigDecimal decimal = value.decimalValue();
 		if (decimal.abs().compareTo(MIN_DOUBLE_MAGNITUDE) < 0 && decimal.stripTrailingZeros().scale() <= 0) {
 			return integerToStoredValue(decimal.toBigIntegerExact());

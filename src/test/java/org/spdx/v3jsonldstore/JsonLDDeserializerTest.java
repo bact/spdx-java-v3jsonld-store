@@ -529,7 +529,7 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		ObjectNode numbers = (ObjectNode) mapper.readTree("{"
 				+ "\"fraction\": 0.35, \"negative\": -2.5, \"count\": 7, \"oneDotZero\": 1.0, \"exponent\": 1e3,"
 				+ "\"aboveInt\": 2147483648, \"above2to53\": 9007199254740993,"
-				+ "\"huge\": 123456789012345678901234567890, \"largeDouble\": 1e21,"
+				+ "\"huge\": 123456789012345678901234567890, \"largeDouble\": 1e21, \"tooLarge\": 1e400, \"negativeZero\": -0.0,"
 				+ "\"doubles\": [0.1, 0.2]}");
 		numbers.properties().forEach(field -> personNode.set(extNamespace + field.getKey(), field.getValue()));
 
@@ -539,10 +539,13 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		assertEquals(0.35d, getExtValue(personSpdxId, extNamespace, "fraction"));
 		assertEquals(-2.5d, getExtValue(personSpdxId, extNamespace, "negative"));
 		assertEquals(1e21d, getExtValue(personSpdxId, extNamespace, "largeDouble"));
+		// beyond the double range
+		assertEquals(Double.POSITIVE_INFINITY, getExtValue(personSpdxId, extNamespace, "tooLarge"));
 		// integers
 		assertEquals(Integer.valueOf(7), getExtValue(personSpdxId, extNamespace, "count"));
 		assertEquals(Integer.valueOf(1), getExtValue(personSpdxId, extNamespace, "oneDotZero"));
 		assertEquals(Integer.valueOf(1000), getExtValue(personSpdxId, extNamespace, "exponent"));
+		assertEquals(Integer.valueOf(0), getExtValue(personSpdxId, extNamespace, "negativeZero"));
 		// integers outside of the int range keep every digit
 		assertEquals(new TypedLiteral("2147483648", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "aboveInt"));
 		assertEquals(new TypedLiteral("9007199254740993", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "above2to53"));
