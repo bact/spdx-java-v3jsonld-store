@@ -5,6 +5,8 @@
  */
 package org.spdx.v3jsonldstore;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -23,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spdx.core.InvalidSPDXAnalysisException;
 import org.spdx.core.SimpleUriValue;
+import org.spdx.core.TypedLiteral;
 import org.spdx.core.TypedValue;
 import org.spdx.library.ListedLicenses;
 import org.spdx.library.ModelCopyManager;
@@ -53,6 +56,13 @@ public class JsonLDDeserializer {
 	static final String SPDX_ID_PROP = "spdxId";
 
 	private static final String SPEC_VERSION_PROP = "specVersion";
+
+	static final String XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer";
+
+	/**
+	 * JSON-LD 1.1 API section 8.2: a number with an absolute value of at least 10^21 is an xsd:double
+	 */
+	private static final BigDecimal MIN_DOUBLE_MAGNITUDE = new BigDecimal("1e21");
 	
 	static {
 		Set<String> allSpdxTypes = new HashSet<>();
@@ -324,11 +334,7 @@ public class JsonLDDeserializer {
 			case NUMBER: {
 				if (propertyType.isEmpty()) {
 					// No schema type (e.g., an extension property) - preserve the JSON number
-					if (value.isIntegralNumber() && value.canConvertToInt()) {
-						return value.asInt();
-					} else {
-						return value.asDouble();
-					}
+					return untypedJsonNumberToStoredValue(value);
 				} else if (JsonLDSchema.INTEGER_TYPES.contains(propertyType.get())) {
 					return value.asInt();
 				} else if (JsonLDSchema.DOUBLE_TYPES.contains(propertyType.get())) {
@@ -347,6 +353,37 @@ public class JsonLDDeserializer {
 			case POJO:
 			default: throw new InvalidSPDXAnalysisException("Unsupported JSON node type: "+ value);
 			}
+	}
+
+	/**
+	 * Converts a JSON number without a type in the schema, such as the value of an extension
+	 * property, following the JSON-LD 1.1 API (section 8.2): a number with a non-zero fractional
+	 * part or an absolute value of at least 10^21 is an xsd:double, any other number is an xsd:integer
+	 * @param value JSON number
+	 * @return an Integer if the value is an integer in the int range, a {@link TypedLiteral} with the
+	 * datatype xsd:integer for other integers, otherwise a Double
+	 */
+	static Object untypedJsonNumberToStoredValue(JsonNode value) {
+		if (value.isIntegralNumber()) {
+			return integerToStoredValue(value.bigIntegerValue());
+		}
+		BigDecimal decimal = value.decimalValue();
+		if (decimal.abs().compareTo(MIN_DOUBLE_MAGNITUDE) < 0 && decimal.stripTrailingZeros().scale() <= 0) {
+			return integerToStoredValue(decimal.toBigIntegerExact());
+		}
+		return value.asDouble();
+	}
+
+	/**
+	 * @param value integer value
+	 * @return an Integer if the value fits, otherwise an xsd:integer {@link TypedLiteral} with every digit
+	 */
+	private static Object integerToStoredValue(BigInteger value) {
+		if (value.bitLength() < Integer.SIZE) {
+			return value.intValue();
+		} else {
+			return new TypedLiteral(value.toString(), XSD_INTEGER);
+		}
 	}
 
 	/**

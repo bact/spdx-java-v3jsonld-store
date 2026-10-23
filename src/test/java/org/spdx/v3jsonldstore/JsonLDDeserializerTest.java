@@ -16,6 +16,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.spdx.core.CoreModelObject;
 import org.spdx.core.InvalidSPDXAnalysisException;
+import org.spdx.core.TypedLiteral;
 import org.spdx.core.TypedValue;
 import org.spdx.library.SpdxModelFactory;
 import org.spdx.library.model.v3_0_1.SpdxConstantsV3;
@@ -47,6 +48,8 @@ import net.jimblackler.jsonschemafriend.GenerationException;
  * @author Gary O'Neall
  */
 public class JsonLDDeserializerTest {
+
+	static final String XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer";
 
 	IModelStore modelStore;
 	ObjectMapper mapper;
@@ -494,12 +497,16 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		assertTrue(verify.isEmpty());
 	}
 
+	private Object getExtValue(String objectUri, String namespace, String name) throws InvalidSPDXAnalysisException {
+		return modelStore.getValue(objectUri, new PropertyDescriptor(name, namespace)).get();
+	}
+
 	/**
 	 * Numbers in properties without a schema type (e.g., extension properties)
 	 * must keep their value: non-integer numbers must not be truncated to integers.
 	 */
 	@Test
-	public void testDeserializeExtensionPropertyNumbers() throws GenerationException, InvalidSPDXAnalysisException {
+	public void testDeserializeExtensionPropertyNumbers() throws Exception {
 		JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 
 		String specVersion = "3.0.1";
@@ -518,24 +525,34 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		personNode.set("spdxId", new TextNode(personSpdxId));
 		personNode.set("name", new TextNode("Person Name"));
 		personNode.set("creationInfo", creationInfoNode);
-		personNode.put(extNamespace + "fraction", 0.35);
-		personNode.put(extNamespace + "negative", -2.5);
-		personNode.put(extNamespace + "count", 7);
-		personNode.put(extNamespace + "big", 12345678901L);
+		// Numbers are read as written in the JSON text
+		ObjectNode numbers = (ObjectNode) mapper.readTree("{"
+				+ "\"fraction\": 0.35, \"negative\": -2.5, \"count\": 7, \"oneDotZero\": 1.0, \"exponent\": 1e3,"
+				+ "\"aboveInt\": 2147483648, \"above2to53\": 9007199254740993,"
+				+ "\"huge\": 123456789012345678901234567890, \"largeDouble\": 1e21,"
+				+ "\"doubles\": [0.1, 0.2]}");
+		numbers.properties().forEach(field -> personNode.set(extNamespace + field.getKey(), field.getValue()));
 
 		deserializer.deserializeElement(personNode);
 
-		Object fraction = modelStore.getValue(personSpdxId, new PropertyDescriptor("fraction", extNamespace)).get();
-		assertTrue(fraction instanceof Double);
-		assertEquals(0.35, (Double) fraction, 0.0);
-		Object negative = modelStore.getValue(personSpdxId, new PropertyDescriptor("negative", extNamespace)).get();
-		assertTrue(negative instanceof Double);
-		assertEquals(-2.5, (Double) negative, 0.0);
-		Object count = modelStore.getValue(personSpdxId, new PropertyDescriptor("count", extNamespace)).get();
-		assertEquals(Integer.valueOf(7), count);
-		Object big = modelStore.getValue(personSpdxId, new PropertyDescriptor("big", extNamespace)).get();
-		assertTrue(big instanceof Double);
-		assertEquals(12345678901.0, (Double) big, 0.0);
+		// non-integers (JSON-LD 1.1 API 8.2: non-zero fractional part or >= 1e21) are doubles
+		assertEquals(0.35d, getExtValue(personSpdxId, extNamespace, "fraction"));
+		assertEquals(-2.5d, getExtValue(personSpdxId, extNamespace, "negative"));
+		assertEquals(1e21d, getExtValue(personSpdxId, extNamespace, "largeDouble"));
+		// integers
+		assertEquals(Integer.valueOf(7), getExtValue(personSpdxId, extNamespace, "count"));
+		assertEquals(Integer.valueOf(1), getExtValue(personSpdxId, extNamespace, "oneDotZero"));
+		assertEquals(Integer.valueOf(1000), getExtValue(personSpdxId, extNamespace, "exponent"));
+		// integers outside of the int range keep every digit
+		assertEquals(new TypedLiteral("2147483648", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "aboveInt"));
+		assertEquals(new TypedLiteral("9007199254740993", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "above2to53"));
+		assertEquals(new TypedLiteral("123456789012345678901234567890", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "huge"));
+		// list of doubles
+		List<Object> doubles = new ArrayList<>();
+		modelStore.listValues(personSpdxId, new PropertyDescriptor("doubles", extNamespace)).forEachRemaining(doubles::add);
+		assertEquals(2, doubles.size());
+		assertTrue(doubles.contains(0.1d));
+		assertTrue(doubles.contains(0.2d));
 	}
 
 }

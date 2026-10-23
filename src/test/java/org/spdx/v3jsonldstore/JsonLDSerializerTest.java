@@ -15,8 +15,10 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.spdx.core.InvalidSPDXAnalysisException;
+import org.spdx.core.TypedLiteral;
 import org.spdx.library.ModelCopyManager;
 import org.spdx.library.SpdxModelFactory;
+import org.spdx.library.model.v3_0_1.SpdxConstantsV3;
 import org.spdx.library.model.v3_0_1.core.Agent;
 import org.spdx.library.model.v3_0_1.core.CreationInfo;
 import org.spdx.library.model.v3_0_1.core.ExternalElement;
@@ -37,6 +39,7 @@ import org.spdx.storage.simple.InMemSpdxStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import net.jimblackler.jsonschemafriend.GenerationException;
 
@@ -44,6 +47,9 @@ import net.jimblackler.jsonschemafriend.GenerationException;
  * @author Gary O'Neall
  */
 public class JsonLDSerializerTest {
+
+	static final String XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer";
+	static final String XSD_DOUBLE = "http://www.w3.org/2001/XMLSchema#double";
 	ObjectMapper mapper;
 	IModelStore modelStore;
 
@@ -473,6 +479,46 @@ public class JsonLDSerializerTest {
 		String prefix = "http://test.uri#";
 		String personUri = prefix + "PERSON";
 		String extNamespace = "https://example.org/spdx3-ext/test/";
+		Person person = createPerson(personUri, prefix);
+		modelStore.setValue(personUri, new PropertyDescriptor("fraction", extNamespace), 0.35);
+		modelStore.setValue(personUri, new PropertyDescriptor("floatValue", extNamespace), 1.5f);
+		modelStore.setValue(personUri, new PropertyDescriptor("integralDouble", extNamespace), 3.0);
+		modelStore.setValue(personUri, new PropertyDescriptor("nan", extNamespace), Double.NaN);
+		modelStore.setValue(personUri, new PropertyDescriptor("inf", extNamespace), Double.POSITIVE_INFINITY);
+		modelStore.setValue(personUri, new PropertyDescriptor("negInf", extNamespace), Double.NEGATIVE_INFINITY);
+		modelStore.setValue(personUri, new PropertyDescriptor("big", extNamespace),
+				new TypedLiteral("9007199254740993", XSD_INTEGER));
+		modelStore.addValueToCollection(personUri, new PropertyDescriptor("doubles", extNamespace), 0.1);
+		modelStore.addValueToCollection(personUri, new PropertyDescriptor("doubles", extNamespace), 0.2);
+
+		JsonNode personResult = serializePerson(serializer, person);
+		JsonNode fraction = personResult.get(extNamespace + "fraction");
+		assertTrue(fraction.isNumber());
+		assertEquals(0.35, fraction.asDouble(), 0.0);
+		JsonNode floatValue = personResult.get(extNamespace + "floatValue");
+		assertTrue(floatValue.isNumber());
+		assertEquals(1.5, floatValue.asDouble(), 0.0);
+		// an integral double written as a JSON number would be read back as an integer
+		assertEquals(valueObject("3.0", XSD_DOUBLE), personResult.get(extNamespace + "integralDouble"));
+		assertEquals(valueObject("NaN", XSD_DOUBLE), personResult.get(extNamespace + "nan"));
+		assertEquals(valueObject("INF", XSD_DOUBLE), personResult.get(extNamespace + "inf"));
+		assertEquals(valueObject("-INF", XSD_DOUBLE), personResult.get(extNamespace + "negInf"));
+		assertEquals(valueObject("9007199254740993", XSD_INTEGER), personResult.get(extNamespace + "big"));
+		JsonNode doubles = personResult.get(extNamespace + "doubles");
+		assertEquals(2, doubles.size());
+		for (JsonNode d : doubles) {
+			assertTrue(d.isNumber());
+		}
+	}
+
+	private JsonNode valueObject(String value, String datatype) {
+		ObjectNode retval = mapper.createObjectNode();
+		retval.put("@value", value);
+		retval.put("@type", datatype);
+		return retval;
+	}
+
+	private Person createPerson(String personUri, String prefix) throws InvalidSPDXAnalysisException {
 		ModelCopyManager copyManager = new ModelCopyManager();
 		Person person = new Person(modelStore, personUri, copyManager, true, prefix);
 		CreationInfo creationInfo = person.createCreationInfo(modelStore.getNextId(IdType.Anonymous))
@@ -482,19 +528,79 @@ public class JsonLDSerializerTest {
 		creationInfo.getCreatedBys().add(person);
 		person.setCreationInfo(creationInfo);
 		person.setName("Person Name");
-		modelStore.setValue(personUri, new PropertyDescriptor("fraction", extNamespace), 0.35);
+		return person;
+	}
 
+	private JsonNode serializePerson(JsonLDSerializer serializer, Person person) throws InvalidSPDXAnalysisException {
 		JsonNode result = serializer.serialize(person);
-		JsonNode personResult = null;
 		for (JsonNode element : result.get("@graph")) {
 			if ("Person".equals(element.get("type").asText())) {
-				personResult = element;
+				return element;
 			}
 		}
-		assertNotNull(personResult);
-		JsonNode fraction = personResult.get(extNamespace + "fraction");
-		assertNotNull(fraction);
-		assertTrue(fraction.isNumber());
-		assertEquals(0.35, fraction.asDouble(), 0.0);
+		fail("Person not found");
+		return null;
+	}
+
+	/**
+	 * SPDX decimal properties must be written in a form the SPDX JSON schema accepts
+	 */
+	@Test
+	public void testSerializeSpdxDecimal() throws GenerationException, InvalidSPDXAnalysisException {
+		JsonLDSerializer serializer = new JsonLDSerializer(mapper, true, false, SpdxModelFactory.getLatestSpecVersion(), modelStore);
+		String prefix = "http://test.uri#";
+		String personUri = prefix + "PERSON";
+		Person person = createPerson(personUri, prefix);
+		// a decimal property, not checked by the store for the element type
+		modelStore.setValue(personUri, SpdxConstantsV3.PROP_SCORE, 1e-7);
+		JsonNode score = serializePerson(serializer, person).get("security_score");
+		assertEquals("0.0000001", score.asText());
+		assertTrue(score.asText().matches("^-?[0-9]+(\\.[0-9]*)?$"));
+		modelStore.setValue(personUri, SpdxConstantsV3.PROP_SCORE, 1e22);
+		assertEquals("10000000000000000000000", serializePerson(serializer, person).get("security_score").asText());
+		modelStore.setValue(personUri, SpdxConstantsV3.PROP_SCORE, Double.NaN);
+		try {
+			serializer.serialize(person);
+			fail("NaN is not a valid decimal");
+		} catch (InvalidSPDXAnalysisException e) {
+			// expected
+		}
+		modelStore.setValue(personUri, SpdxConstantsV3.PROP_SCORE, new TypedLiteral("1.5", XSD_DOUBLE));
+		try {
+			serializer.serialize(person);
+			fail("A typed literal is not a valid value of an SPDX property");
+		} catch (InvalidSPDXAnalysisException e) {
+			// expected
+		}
+	}
+
+	/**
+	 * A property is an SPDX property only if its term is defined in the SPDX JSON-LD context
+	 */
+	@Test
+	public void testIsSpdxProperty() throws Exception {
+		JsonLDSerializer serializer = new JsonLDSerializer(mapper, true, false, SpdxModelFactory.getLatestSpecVersion(), modelStore);
+		for (java.lang.reflect.Field field : SpdxConstantsV3.class.getFields()) {
+			// PROP_SECURITY_LOCATOR has the name "SecurityLocator" instead of "locator" in spdx-java-model-3_0
+			if (field.getName().startsWith("PROP_") && field.getType().equals(PropertyDescriptor.class) &&
+					!"PROP_SECURITY_LOCATOR".equals(field.getName())) {
+				PropertyDescriptor prop = (PropertyDescriptor) field.get(null);
+				assertTrue(prop.toString(), serializer.isSpdxProperty(prop));
+			}
+		}
+		assertFalse(serializer.isSpdxProperty(new PropertyDescriptor("myProp", "https://spdx.org/rdf/3.0.1/terms/Extension/")));
+		assertFalse(serializer.isSpdxProperty(new PropertyDescriptor("name", "https://spdx.org/rdf/3.0.0/terms/Core/")));
+		assertFalse(serializer.isSpdxProperty(new PropertyDescriptor("name", "https://example.org/ext/")));
+
+		String prefix = "http://test.uri#";
+		String personUri = prefix + "PERSON";
+		Person person = createPerson(personUri, prefix);
+		modelStore.setValue(personUri, new PropertyDescriptor("myProp", "https://spdx.org/rdf/3.0.1/terms/Extension/"), "x");
+		modelStore.setValue(personUri, new PropertyDescriptor("comment", "https://spdx.org/rdf/3.0.0/terms/Core/"), "y");
+		JsonNode personResult = serializePerson(serializer, person);
+		assertEquals("x", personResult.get("https://spdx.org/rdf/3.0.1/terms/Extension/myProp").asText());
+		assertEquals("y", personResult.get("https://spdx.org/rdf/3.0.0/terms/Core/comment").asText());
+		assertNull(personResult.get("extension_myProp"));
+		assertNull(personResult.get("comment"));
 	}
 }

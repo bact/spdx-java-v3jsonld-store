@@ -5,6 +5,7 @@
  */
 package org.spdx.v3jsonldstore;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -28,6 +29,7 @@ import org.spdx.core.CoreModelObject;
 import org.spdx.core.IndividualUriValue;
 import org.spdx.core.InvalidSPDXAnalysisException;
 import org.spdx.core.ModelRegistry;
+import org.spdx.core.TypedLiteral;
 import org.spdx.core.TypedValue;
 import org.spdx.library.ModelCopyManager;
 import org.spdx.library.SpdxModelFactory;
@@ -142,6 +144,13 @@ public class JsonLDSerializer {
 	private static final String NON_URI_WARNING = "SPDX element has a non-URI ID: {}.  Converting to URI {}.";
 
 	private static final String CONTEXT_PROP = "@context";
+
+	private static final String XSD_DOUBLE = "http://www.w3.org/2001/XMLSchema#double";
+
+	/**
+	 * JSON-LD 1.1 API section 8.2: a JSON number of at least this magnitude is read as an xsd:double
+	 */
+	private static final double MIN_DOUBLE_MAGNITUDE = 1e21;
 	
 	private final IModelStore modelStore;
 	private final ObjectMapper jsonMapper;
@@ -463,12 +472,37 @@ public class JsonLDSerializer {
 	}
 
 	/**
+	 * A property is an SPDX property if its JSON-LD term is defined in the SPDX JSON-LD context
+	 * for the spec version being serialized.  Any other property, including a property in an SPDX
+	 * namespace which is not in the context, is an extension property.
 	 * @param prop property
-	 * @return true if the property is defined in an SPDX namespace, false if it is an extension property
+	 * @return true if the property is defined in the SPDX JSON-LD context, false if it is an extension property
 	 */
-	private static boolean isSpdxProperty(PropertyDescriptor prop) {
+	boolean isSpdxProperty(PropertyDescriptor prop) {
+		Optional<String> term = spdxPropertyTerm(prop);
+		if (term.isEmpty()) {
+			return false;
+		}
+		Optional<PropertyDescriptor> contextProperty = jsonLDSchema.getPropertyDescriptor(term.get());
+		return contextProperty.isPresent() && contextProperty.get().equals(prop);
+	}
+
+	/**
+	 * @param prop property
+	 * @return the compact JSON-LD term the property would have if it is an SPDX property
+	 */
+	private static Optional<String> spdxPropertyTerm(PropertyDescriptor prop) {
 		//TODO: Add an SPDX general namespace prefix to SpdxConstantsV3 we can use for comparison
-		return prop.getNameSpace().startsWith("https://spdx.org/rdf/");
+		if (!prop.getNameSpace().startsWith("https://spdx.org/rdf/") || !prop.getNameSpace().endsWith("/")) {
+			return Optional.empty();
+		}
+		String profile = prop.getNameSpace().substring(0, prop.getNameSpace().length()-1);
+		profile = profile.substring(profile.lastIndexOf('/') + 1);
+		if ("Core".equals(profile)) {
+			return Optional.of(prop.getName());
+		} else {
+			return Optional.of(profile.toLowerCase() + "_" + prop.getName());
+		}
 	}
 
 	/**
@@ -477,14 +511,7 @@ public class JsonLDSerializer {
 	 */
 	private String propertyToJsonLdPropName(PropertyDescriptor prop) {
 		if (isSpdxProperty(prop)) {
-			// we'll assume this is an SPDX standard property URL
-			String profile = prop.getNameSpace().substring(0, prop.getNameSpace().length()-1);
-			profile = profile.substring(profile.lastIndexOf('/') + 1);
-			if ("Core".equals(profile)) {
-				return prop.getName();
-			} else {
-				return profile.toLowerCase() + "_" + prop.getName();
-			}
+			return spdxPropertyTerm(prop).get();
 		} else {
 			// we'll assume this is an extension property
 			return prop.toString();
@@ -511,13 +538,18 @@ public class JsonLDSerializer {
 			return ((Boolean)object) ? BooleanNode.TRUE : BooleanNode.FALSE;
 		} else if (object instanceof Integer) {
 			return new IntNode((Integer) object);
-		} else if (object instanceof Double) {
+		} else if (object instanceof Double || object instanceof Float) {
+			// Float.toString keeps the decimal digits as written (e.g., 0.1f is not 0.10000000149011612)
+			double d = object instanceof Float ? Double.parseDouble(object.toString()) : (Double) object;
+			return isSpdxProperty(prop) ? spdxDecimalToJsonNode(d, prop) : extensionDoubleToJsonNode(d);
+		} else if (object instanceof TypedLiteral) {
 			if (isSpdxProperty(prop)) {
-				return new TextNode(object.toString());
-			} else {
-				// extension property - keep the JSON number type
-				return new DoubleNode((Double) object);
+				throw new InvalidSPDXAnalysisException("A typed literal can not be the value of the SPDX property "+prop);
 			}
+			ObjectNode valueObject = jsonMapper.createObjectNode();
+			valueObject.set("@value", new TextNode(((TypedLiteral)object).getValue()));
+			valueObject.set("@type", new TextNode(((TypedLiteral)object).getDatatype()));
+			return valueObject;
 		} else if (object instanceof IndividualUriValue) {
 			// it's an Enum, Individual or external element
 			String individualUri = ((IndividualUriValue)object).getIndividualURI();
@@ -531,6 +563,41 @@ public class JsonLDSerializer {
 		} else {
 			throw new InvalidSPDXAnalysisException("Unknown class for object to json node: "+object.getClass());
 		}
+	}
+
+	/**
+	 * @param d value of an SPDX decimal property
+	 * @param prop property
+	 * @return a string in the form required by the SPDX JSON schema and xsd:decimal (no exponent)
+	 * @throws InvalidSPDXAnalysisException if the value is not a finite number
+	 */
+	private JsonNode spdxDecimalToJsonNode(double d, PropertyDescriptor prop) throws InvalidSPDXAnalysisException {
+		if (Double.isNaN(d) || Double.isInfinite(d)) {
+			throw new InvalidSPDXAnalysisException("Invalid decimal value "+d+" for property "+prop);
+		}
+		return new TextNode(BigDecimal.valueOf(d).stripTrailingZeros().toPlainString());
+	}
+
+	/**
+	 * @param d value of an extension property
+	 * @return a JSON number if JSON-LD reads it back as the same xsd:double, otherwise an xsd:double value object
+	 */
+	private JsonNode extensionDoubleToJsonNode(double d) {
+		String lexical;
+		if (Double.isNaN(d)) {
+			lexical = "NaN";
+		} else if (Double.isInfinite(d)) {
+			lexical = d > 0 ? "INF" : "-INF";
+		} else if (d == Math.rint(d) && Math.abs(d) < MIN_DOUBLE_MAGNITUDE) {
+			// JSON-LD reads an integral JSON number below 10^21 as an xsd:integer
+			lexical = Double.toString(d);
+		} else {
+			return new DoubleNode(d);
+		}
+		ObjectNode valueObject = jsonMapper.createObjectNode();
+		valueObject.set("@value", new TextNode(lexical));
+		valueObject.set("@type", new TextNode(XSD_DOUBLE));
+		return valueObject;
 	}
 
 	/**
