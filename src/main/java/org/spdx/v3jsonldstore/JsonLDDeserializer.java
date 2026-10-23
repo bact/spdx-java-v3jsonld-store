@@ -719,7 +719,43 @@ public class JsonLDDeserializer {
 			logger.warn("The datatype {} of property {} looks like a compact IRI, but the SPDX JSON-LD context does not define its prefix.  It is kept as written.",
 					datatype, propertyName);
 		}
-		return new TypedLiteral(literalToLexicalForm(literal, datatype), datatype);
+		return typedLiteralToStoredValue(literalToLexicalForm(literal, datatype), datatype);
+	}
+
+	/**
+	 * Converts a literal with a datatype to the stored value
+	 * <p>
+	 * An xsd:integer in the int range or an xsd:double, in the canonical lexical form, is stored as an
+	 * Integer or a Double, which the serializer writes back as the same RDF literal.  Any other literal
+	 * is stored as a {@link TypedLiteral} so that its lexical form is kept (e.g., "2.50"^^xsd:double).
+	 * </p>
+	 * @param lexical lexical form
+	 * @param datatype datatype IRI
+	 * @return an Integer, a Double, or a TypedLiteral
+	 */
+	static Object typedLiteralToStoredValue(String lexical, String datatype) {
+		try {
+			if (XSD_INTEGER.equals(datatype)) {
+				int i = Integer.parseInt(lexical);
+				if (Integer.toString(i).equals(lexical)) {
+					return i;
+				}
+			} else if (XSD_DOUBLE.equals(datatype)) {
+				double d;
+				switch (lexical) {
+					case "INF": d = Double.POSITIVE_INFINITY; break;
+					case "-INF": d = Double.NEGATIVE_INFINITY; break;
+					case "NaN": d = Double.NaN; break;
+					default: d = lexical.matches("[-+]?[0-9.]+([eE][-+]?[0-9]+)?") ? Double.parseDouble(lexical) : Double.NaN;
+				}
+				if (JsonLDSerializer.canonicalDouble(d).equals(lexical)) {
+					return d;
+				}
+			}
+		} catch (NumberFormatException e) {
+			// not in the canonical form
+		}
+		return new TypedLiteral(lexical, datatype);
 	}
 
 	/**
@@ -733,7 +769,7 @@ public class JsonLDDeserializer {
 		if (literal.isNumber()) {
 			Object number = untypedJsonNumberToStoredValue(literal);
 			if (XSD_DOUBLE.equals(datatype) || number instanceof Double) {
-				return canonicalDouble(literal.asDouble());
+				return JsonLDSerializer.canonicalDouble(literal.asDouble());
 			} else if (number instanceof TypedLiteral) {
 				return ((TypedLiteral) number).getValue();
 			} else {
@@ -742,26 +778,6 @@ public class JsonLDDeserializer {
 		}
 		return literal.asText();
 	}
-
-	/**
-	 * @param d value
-	 * @return the canonical lexical form of an xsd:double, as used by the JSON-LD 1.1 API (e.g., 5.0E-1)
-	 */
-	static String canonicalDouble(double d) {
-		if (Double.isNaN(d)) {
-			return "NaN";
-		} else if (Double.isInfinite(d)) {
-			return d > 0 ? "INF" : "-INF";
-		} else if (d == 0) {
-			return 1 / d < 0 ? "-0.0E0" : "0.0E0";
-		}
-		BigDecimal decimal = new BigDecimal(Double.toString(d)).stripTrailingZeros();
-		String digits = decimal.unscaledValue().abs().toString();
-		int exponent = digits.length() - 1 - decimal.scale();
-		return (decimal.signum() < 0 ? "-" : "") + digits.charAt(0) + "." +
-				(digits.length() > 1 ? digits.substring(1) : "0") + "E" + exponent;
-	}
-
 
 	/**
 	 * @param propertyName name of property in the JSON schema
