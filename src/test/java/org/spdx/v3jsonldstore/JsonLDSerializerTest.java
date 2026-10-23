@@ -499,7 +499,8 @@ public class JsonLDSerializerTest {
 		assertTrue(floatValue.isNumber());
 		assertEquals(1.5, floatValue.asDouble(), 0.0);
 		// an integral double written as a JSON number would be read back as an integer
-		assertEquals(valueObject("3.0", XSD_DOUBLE), personResult.get(extNamespace + "integralDouble"));
+		// in the canonical xsd:double form used by JSON-LD
+		assertEquals(valueObject("3.0E0", XSD_DOUBLE), personResult.get(extNamespace + "integralDouble"));
 		assertEquals(valueObject("NaN", XSD_DOUBLE), personResult.get(extNamespace + "nan"));
 		assertEquals(valueObject("INF", XSD_DOUBLE), personResult.get(extNamespace + "inf"));
 		assertEquals(valueObject("-INF", XSD_DOUBLE), personResult.get(extNamespace + "negInf"));

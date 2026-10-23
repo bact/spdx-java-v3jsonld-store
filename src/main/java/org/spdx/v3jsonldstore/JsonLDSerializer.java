@@ -583,21 +583,34 @@ public class JsonLDSerializer {
 	 * @return a JSON number if JSON-LD reads it back as the same xsd:double, otherwise an xsd:double value object
 	 */
 	private JsonNode extensionDoubleToJsonNode(double d) {
-		String lexical;
-		if (Double.isNaN(d)) {
-			lexical = "NaN";
-		} else if (Double.isInfinite(d)) {
-			lexical = d > 0 ? "INF" : "-INF";
-		} else if (d == Math.rint(d) && Math.abs(d) < MIN_DOUBLE_MAGNITUDE) {
-			// JSON-LD reads an integral JSON number below 10^21 as an xsd:integer
-			lexical = Double.toString(d);
-		} else {
+		if (Double.isFinite(d) && (d != Math.rint(d) || Math.abs(d) >= MIN_DOUBLE_MAGNITUDE)) {
 			return new DoubleNode(d);
 		}
+		// NaN, infinity, and integral values below 10^21 (which JSON-LD reads back as an xsd:integer
+		// if written as a JSON number) are written as a value object in the canonical form
 		ObjectNode valueObject = jsonMapper.createObjectNode();
-		valueObject.set("@value", new TextNode(lexical));
+		valueObject.set("@value", new TextNode(canonicalDouble(d)));
 		valueObject.set("@type", new TextNode(XSD_DOUBLE));
 		return valueObject;
+	}
+
+	/**
+	 * @param d value
+	 * @return the canonical lexical form of an xsd:double, as used by the JSON-LD 1.1 API (e.g., 5.0E-1)
+	 */
+	static String canonicalDouble(double d) {
+		if (Double.isNaN(d)) {
+			return "NaN";
+		} else if (Double.isInfinite(d)) {
+			return d > 0 ? "INF" : "-INF";
+		} else if (d == 0) {
+			return 1 / d < 0 ? "-0.0E0" : "0.0E0";
+		}
+		BigDecimal decimal = new BigDecimal(Double.toString(d)).stripTrailingZeros();
+		String digits = decimal.unscaledValue().abs().toString();
+		int exponent = digits.length() - 1 - decimal.scale();
+		return (decimal.signum() < 0 ? "-" : "") + digits.charAt(0) + "." +
+				(digits.length() > 1 ? digits.substring(1) : "0") + "E" + exponent;
 	}
 
 	/**
