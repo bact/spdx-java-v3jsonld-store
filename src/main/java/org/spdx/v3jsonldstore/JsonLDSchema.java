@@ -491,6 +491,11 @@ public class JsonLDSchema {
 
 	/**
 	 * Expands a compact IRI (prefix:suffix) whose prefix is defined in the JSON-LD context
+	 * <p>
+	 * Following the JSON-LD 1.1 IRI expansion, only a term with the prefix flag can be used as
+	 * a prefix (see {@link #prefixIri(String, JsonNode)}).  For example, {@code Agent:Foo} is an
+	 * absolute IRI with the scheme {@code Agent} even though the context defines the term {@code Agent}.
+	 * </p>
 	 * @param value IRI, compact IRI, or other value
 	 * @return the expanded IRI if the value is a compact IRI with a prefix defined in the context, otherwise the value
 	 */
@@ -499,11 +504,37 @@ public class JsonLDSchema {
 		if (colon <= 0 || value.startsWith("//", colon + 1)) {
 			return value;
 		}
-		JsonNode prefix = contexts.get(value.substring(0, colon));
-		if (Objects.nonNull(prefix) && prefix.isTextual()) {
-			return prefix.asText() + value.substring(colon + 1);
+		String term = value.substring(0, colon);
+		JsonNode definition = contexts.get(term);
+		if (Objects.isNull(definition)) {
+			return value;
 		}
-		return value;
+		Optional<String> prefix = prefixIri(term, definition);
+		return prefix.isPresent() ? prefix.get() + value.substring(colon + 1) : value;
+	}
+
+	/**
+	 * Returns the IRI of a term which can be used as the prefix of a compact IRI, following the
+	 * JSON-LD 1.1 Create Term Definition algorithm: a simple term definition (a string) whose IRI
+	 * ends with a gen-delim character ({@code : / ? # [ ] @}) and whose term contains neither a
+	 * colon nor a slash, or an expanded term definition with {@code "@prefix": true}
+	 * @param term term
+	 * @param definition term definition from the context
+	 * @return the IRI of the prefix, or empty if the term is not a prefix
+	 */
+	static Optional<String> prefixIri(String term, JsonNode definition) {
+		if (definition.isTextual()) {
+			String iri = definition.asText();
+			if (!iri.isEmpty() && term.indexOf(':') < 0 && term.indexOf('/') < 0 &&
+					":/?#[]@".indexOf(iri.charAt(iri.length() - 1)) >= 0) {
+				return Optional.of(iri);
+			}
+			return Optional.empty();
+		}
+		if (definition.isObject() && definition.path("@prefix").asBoolean(false) && definition.path("@id").isTextual()) {
+			return Optional.of(definition.get("@id").asText());
+		}
+		return Optional.empty();
 	}
 
 	/**
