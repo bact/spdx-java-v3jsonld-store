@@ -662,7 +662,12 @@ public class JsonLDStoreTest {
 				+ "\"" + X + "numDouble\": {\"@value\": 2, \"@type\": \"" + xsd + "double\"}, "
 				+ "\"" + X + "bool\": {\"@value\": true, \"@type\": \"" + xsd + "boolean\"}, "
 				+ "\"" + X + "compactType\": {\"@value\": \"0.35\", \"@type\": \"xsd:decimal\"}, "
-				+ "\"" + X + "indexed\": {\"@value\": \"x\", \"@index\": \"i\"}}");
+				+ "\"" + X + "indexed\": {\"@value\": \"x\", \"@index\": \"i\"}, "
+				+ "\"" + X + "negInf\": {\"@value\": \"-INF\", \"@type\": \"" + xsd + "double\"}, "
+				+ "\"" + X + "negZero\": {\"@value\": \"-0.0E0\", \"@type\": \"" + xsd + "double\"}, "
+				+ "\"" + X + "strDouble\": {\"@value\": \"2.50\", \"@type\": \"" + xsd + "double\"}, "
+				+ "\"" + X + "strInteger\": {\"@value\": \"007\", \"@type\": \"" + xsd + "integer\"}, "
+				+ "\"" + X + "bigInteger\": {\"@value\": \"2147483648\", \"@type\": \"" + xsd + "integer\"}}");
 		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
 			ldStore.deSerialize(new ByteArrayInputStream(doc.toString().getBytes(StandardCharsets.UTF_8)), false);
 			Element dataset = (Element) SpdxModelFactory.inflateModelObject(ldStore, DATASET_ID,
@@ -671,9 +676,16 @@ public class JsonLDStoreTest {
 			// @value without @type is the plain value
 			assertEquals(1.5d, ldStore.getValue(extUri, new PropertyDescriptor("noType", X)).get());
 			// numbers with a @type use the canonical lexical form of the JSON-LD 1.1 API section 8.2
-			assertEquals(new TypedLiteral("1000", xsd + "integer"), ldStore.getValue(extUri, new PropertyDescriptor("numInteger", X)).get());
+			// xsd:integer and xsd:double literals in the canonical form are read as Integer and Double
+			assertEquals(Integer.valueOf(1000), ldStore.getValue(extUri, new PropertyDescriptor("numInteger", X)).get());
 			assertEquals(new TypedLiteral("5.0E-1", xsd + "decimal"), ldStore.getValue(extUri, new PropertyDescriptor("numDecimal", X)).get());
-			assertEquals(new TypedLiteral("2.0E0", xsd + "double"), ldStore.getValue(extUri, new PropertyDescriptor("numDouble", X)).get());
+			assertEquals(2.0d, ldStore.getValue(extUri, new PropertyDescriptor("numDouble", X)).get());
+			assertEquals(Double.NEGATIVE_INFINITY, ldStore.getValue(extUri, new PropertyDescriptor("negInf", X)).get());
+			assertEquals(-0.0d, ldStore.getValue(extUri, new PropertyDescriptor("negZero", X)).get());
+			// other lexical forms are kept as written
+			assertEquals(new TypedLiteral("2.50", xsd + "double"), ldStore.getValue(extUri, new PropertyDescriptor("strDouble", X)).get());
+			assertEquals(new TypedLiteral("007", xsd + "integer"), ldStore.getValue(extUri, new PropertyDescriptor("strInteger", X)).get());
+			assertEquals(new TypedLiteral("2147483648", xsd + "integer"), ldStore.getValue(extUri, new PropertyDescriptor("bigInteger", X)).get());
 			assertEquals(new TypedLiteral("true", xsd + "boolean"), ldStore.getValue(extUri, new PropertyDescriptor("bool", X)).get());
 			// a compact datatype is kept as written (with a warning) - the SPDX context defines no xsd prefix
 			assertEquals(new TypedLiteral("0.35", "xsd:decimal"), ldStore.getValue(extUri, new PropertyDescriptor("compactType", X)).get());
