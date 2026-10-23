@@ -927,13 +927,15 @@ public class JsonLDDeserializer {
 	 * Converts a type node to an SPDX type, or to a custom type if the type is an IRI
 	 * outside the SPDX namespace
 	 * <p>
-	 * A custom type which has no class registered in the {@link ModelRegistry} is registered
-	 * as a {@link GenericExtension} so that it can be stored and inflated.
+	 * The type IRIs found in the input are not registered in the {@link ModelRegistry}.  A custom
+	 * type with no class registered for it uses the default extension type of the registry, which
+	 * is set to {@link GenericExtension} if the application has not set one, so that the object
+	 * can be stored and inflated.
 	 * </p>
 	 * @param typeNode node containing the type
 	 * @param specVersion version of the spec
-	 * @return the SPDX type or the custom type IRI
-	 * @throws InvalidSPDXAnalysisException on errors registering the custom type
+	 * @return the SPDX type or the custom type IRI, or empty if the type can not be used
+	 * @throws InvalidSPDXAnalysisException on errors registering the default extension type
 	 */
 	private Optional<String> typeNodeToTypeOrCustomType(JsonNode typeNode, String specVersion) throws InvalidSPDXAnalysisException {
 		Optional<String> spdxType = typeNodeToType(typeNode);
