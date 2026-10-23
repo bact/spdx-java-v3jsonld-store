@@ -181,4 +181,27 @@ public class JsonLDSchemaTest {
 		assertFalse(schema.isIndividual(objectProperty, nonIndividualValue));
 		assertFalse(schema.isIndividual(stringProperty, individualValue));
 	}
+
+	/**
+	 * Only terms with the JSON-LD 1.1 prefix flag can be used as the prefix of a compact IRI
+	 */
+	@Test
+	public void testExpandCompactIri() throws Exception {
+		JsonLDSchema schema = new JsonLDSchema("schema-v3.0.1.json", "spdx-context-v3.0.1.jsonld", "spdx-model-v3.0.1.jsonld");
+		assertEquals("https://spdx.org/rdf/3.0.1/terms/Core/Agent", schema.expandCompactIri("spdx:Core/Agent"));
+		// Agent maps to an IRI which does not end with a gen-delim character - not a prefix
+		assertEquals("Agent:Foo", schema.expandCompactIri("Agent:Foo"));
+		assertEquals("https://example.org/x", schema.expandCompactIri("https://example.org/x"));
+		assertEquals("xsd:integer", schema.expandCompactIri("xsd:integer"));
+
+		com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+		// simple term ending with a gen-delim character
+		assertEquals("https://example.org/ns#", JsonLDSchema.prefixIri("ex", mapper.readTree("\"https://example.org/ns#\"")).get());
+		assertFalse(JsonLDSchema.prefixIri("ex", mapper.readTree("\"https://example.org/ns\"")).isPresent());
+		// expanded term definitions only with @prefix true
+		assertFalse(JsonLDSchema.prefixIri("ex", mapper.readTree("{\"@id\": \"https://example.org/ns/\"}")).isPresent());
+		assertEquals("https://example.org/ns", JsonLDSchema.prefixIri("ex",
+				mapper.readTree("{\"@id\": \"https://example.org/ns\", \"@prefix\": true}")).get());
+		assertFalse(JsonLDSchema.prefixIri("ex", mapper.readTree("{\"@id\": \"https://example.org/ns/\", \"@prefix\": false}")).isPresent());
+	}
 }
