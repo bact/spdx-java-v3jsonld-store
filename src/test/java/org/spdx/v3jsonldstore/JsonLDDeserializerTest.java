@@ -530,6 +530,7 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 				+ "\"fraction\": 0.35, \"negative\": -2.5, \"count\": 7, \"oneDotZero\": 1.0, \"exponent\": 1e3,"
 				+ "\"aboveInt\": 2147483648, \"above2to53\": 9007199254740993,"
 				+ "\"huge\": 123456789012345678901234567890, \"largeDouble\": 1e21, \"tooLarge\": 1e400, \"negativeZero\": -0.0,"
+				+ "\"largeIntegral\": 1000000000000000000000, \"belowLarge\": 999999999999999999999,"
 				+ "\"doubles\": [0.1, 0.2]}");
 		numbers.properties().forEach(field -> personNode.set(extNamespace + field.getKey(), field.getValue()));
 
@@ -539,6 +540,9 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		assertEquals(0.35d, getExtValue(personSpdxId, extNamespace, "fraction"));
 		assertEquals(-2.5d, getExtValue(personSpdxId, extNamespace, "negative"));
 		assertEquals(1e21d, getExtValue(personSpdxId, extNamespace, "largeDouble"));
+		// integral numbers of at least 1e21 are also doubles
+		assertEquals(1e21d, getExtValue(personSpdxId, extNamespace, "largeIntegral"));
+		assertEquals(123456789012345678901234567890d, getExtValue(personSpdxId, extNamespace, "huge"));
 		// beyond the double range
 		assertEquals(Double.POSITIVE_INFINITY, getExtValue(personSpdxId, extNamespace, "tooLarge"));
 		// integers
@@ -549,13 +553,39 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		// integers outside of the int range keep every digit
 		assertEquals(new TypedLiteral("2147483648", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "aboveInt"));
 		assertEquals(new TypedLiteral("9007199254740993", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "above2to53"));
-		assertEquals(new TypedLiteral("123456789012345678901234567890", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "huge"));
+		assertEquals(new TypedLiteral("999999999999999999999", XSD_INTEGER), getExtValue(personSpdxId, extNamespace, "belowLarge"));
 		// list of doubles
 		List<Object> doubles = new ArrayList<>();
 		modelStore.listValues(personSpdxId, new PropertyDescriptor("doubles", extNamespace)).forEachRemaining(doubles::add);
 		assertEquals(2, doubles.size());
 		assertTrue(doubles.contains(0.1d));
 		assertTrue(doubles.contains(0.2d));
+	}
+
+
+	/**
+	 * A number with a non-zero fraction is an xsd:double even if it rounds to zero as a double
+	 */
+	@Test
+	public void testDeserializeExtensionPropertyTinyNumber() throws Exception {
+		String extNamespace = "https://example.org/spdx3-ext/test/";
+		String personSpdxId = "https://this/is/a/person";
+		ObjectNode personNode = personWithExtensionNumbers(personSpdxId,
+				"{\"tiny\": 1e-400, \"negativeTiny\": -1e-400, \"tinyFraction\": 1.0000000000000000000001}", extNamespace);
+		new JsonLDDeserializer(modelStore).deserializeElement(personNode);
+		assertEquals(0.0d, getExtValue(personSpdxId, extNamespace, "tiny"));
+		assertEquals(-0.0d, getExtValue(personSpdxId, extNamespace, "negativeTiny"));
+		assertEquals(1.0d, getExtValue(personSpdxId, extNamespace, "tinyFraction"));
+	}
+
+	private ObjectNode personWithExtensionNumbers(String personSpdxId, String numbersJson, String extNamespace) throws Exception {
+		ObjectNode personNode = (ObjectNode) JsonLDStore.JSON_MAPPER.readTree("{"
+				+ "\"type\": \"Person\", \"spdxId\": \""+personSpdxId+"\", \"name\": \"Person Name\","
+				+ "\"creationInfo\": {\"type\": \"CreationInfo\", \"specVersion\": \"3.0.1\","
+				+ "\"created\": \"2024-07-18T12:00:00Z\", \"createdBy\": [\""+personSpdxId+"\"]}}");
+		JsonLDStore.JSON_MAPPER.readTree(numbersJson).properties()
+				.forEach(field -> personNode.set(extNamespace + field.getKey(), field.getValue()));
+		return personNode;
 	}
 
 }

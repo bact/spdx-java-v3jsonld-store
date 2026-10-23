@@ -27,6 +27,7 @@ import org.spdx.storage.PropertyDescriptor;
 import org.spdx.storage.simple.ExtendedSpdxStore;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -49,7 +50,12 @@ public class JsonLDStore extends ExtendedSpdxStore
 			ISerializableModelStore {
 	
 	static final Logger logger = LoggerFactory.getLogger(JsonLDStore.class);
-	static final ObjectMapper JSON_MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+	/**
+	 * Numbers with a fraction are read as BigDecimal so that no digits are lost before
+	 * the JSON-LD number rules are applied (e.g., 1e-400 is not 0)
+	 */
+	static final ObjectMapper JSON_MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT)
+			.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 	
 	@SuppressWarnings("UnusedAssignment")
     boolean pretty = true;

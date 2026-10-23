@@ -359,23 +359,35 @@ public class JsonLDDeserializer {
 	 * Converts a JSON number without a type in the schema, such as the value of an extension
 	 * property, following the JSON-LD 1.1 API (section 8.2): a number with a non-zero fractional
 	 * part or an absolute value of at least 10^21 is an xsd:double, any other number is an xsd:integer
+	 * <p>
+	 * The decision is made on the decimal value of the node.  A node parsed as a double has already
+	 * lost digits (e.g., 1e-400 is 0.0), so the JSON text should be parsed with
+	 * {@code DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS}, as {@link JsonLDStore} does.
+	 * </p>
 	 * @param value JSON number
 	 * @return an Integer if the value is an integer in the int range, a {@link TypedLiteral} with the
 	 * datatype xsd:integer for other integers, otherwise a Double
 	 */
 	static Object untypedJsonNumberToStoredValue(JsonNode value) {
 		if (value.isIntegralNumber()) {
-			return integerToStoredValue(value.bigIntegerValue());
+			BigInteger integer = value.bigIntegerValue();
+			if (new BigDecimal(integer).abs().compareTo(MIN_DOUBLE_MAGNITUDE) >= 0) {
+				return value.asDouble();
+			}
+			return integerToStoredValue(integer);
 		}
-		if (!Double.isFinite(value.asDouble())) {
+		double d = value.asDouble();
+		if (!Double.isFinite(d)) {
 			// outside of the double range (e.g., 1e400)
-			return value.asDouble();
+			return d;
 		}
+		// Decide on the decimal value rather than the double: 1e-400 has a non-zero fraction
+		// even though it is 0 as a double
 		BigDecimal decimal = value.decimalValue();
 		if (decimal.abs().compareTo(MIN_DOUBLE_MAGNITUDE) < 0 && decimal.stripTrailingZeros().scale() <= 0) {
 			return integerToStoredValue(decimal.toBigIntegerExact());
 		}
-		return value.asDouble();
+		return d;
 	}
 
 	/**
