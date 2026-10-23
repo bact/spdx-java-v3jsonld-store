@@ -531,7 +531,7 @@ public class JsonLDSerializer {
 	 */
 	private JsonNode objectToJsonNode(Object object, PropertyDescriptor prop, IModelStore fromModelStore, Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
 		if (object instanceof TypedValue) {
-			return typedValueToJsonNode((TypedValue)object, fromModelStore, idToSerializedId);
+			return typedValueToJsonNode((TypedValue)object, !isSpdxProperty(prop), fromModelStore, idToSerializedId);
 		} else if (object instanceof String) {
 			return new TextNode((String)object);
 		} else if (object instanceof Boolean) {
@@ -553,6 +553,10 @@ public class JsonLDSerializer {
 		} else if (object instanceof IndividualUriValue) {
 			// it's an Enum, Individual or external element
 			String individualUri = ((IndividualUriValue)object).getIndividualURI();
+			if (!isSpdxProperty(prop)) {
+				// extension properties have no type in the JSON-LD context - use a node reference
+				return idReference(individualUri);
+			}
 			Enum<?> spdxEnum = SpdxModelFactory.uriToEnum(individualUri, specVersion);
 			if (Objects.nonNull(spdxEnum)) {
 				String enumName = individualUri.substring(individualUri.lastIndexOf('/') + 1);
@@ -617,24 +621,37 @@ public class JsonLDSerializer {
 	 * Converts a typed value to a JSON node representation based on the SPDX 3.X schema
 	 *
 	 * @param tv typed value to translate to a JSON node
+	 * @param extensionProperty true if the value is a value of an extension property
 	 * @param fromModelStore modelStore to retrieve the property information from
 	 * @param idToSerializedId partial Map of IDs in the modelStore to the IDs used in the serialization
 	 * @return a JSON node representation of a typed value based on the object type and SPDX 3.X serialization spec
 	 * @throws InvalidSPDXAnalysisException on errors retrieving model store information
 	 */
-	private JsonNode typedValueToJsonNode(TypedValue tv, IModelStore fromModelStore, Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
-		if (jsonLDSchema.getElementTypes().contains(tv.getType())) {
-			// Just return the object URI since the element will be in the @graph
-			return new TextNode(idToSerializedId.getOrDefault(tv.getObjectUri(), tv.getObjectUri()));
-		} else if (SpdxConstantsV3.CORE_CREATION_INFO.equals(tv.getType()) && idToSerializedId.containsKey(tv.getObjectUri()))  {
-			return new TextNode (idToSerializedId.getOrDefault(tv.getObjectUri(), tv.getObjectUri()));
-		} else if (pretty && jsonLDSchema.getAnyLicenseInfoTypes().contains(tv.getType())) {
+	private JsonNode typedValueToJsonNode(TypedValue tv, boolean extensionProperty, IModelStore fromModelStore,
+			Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
+		if (jsonLDSchema.getElementTypes().contains(tv.getType()) ||
+				(SpdxConstantsV3.CORE_CREATION_INFO.equals(tv.getType()) && idToSerializedId.containsKey(tv.getObjectUri()))) {
+			// Just return the object URI since the object will be in the @graph
+			String id = idToSerializedId.getOrDefault(tv.getObjectUri(), tv.getObjectUri());
+			// extension properties have no type in the JSON-LD context - use a node reference
+			return extensionProperty ? idReference(id) : new TextNode(id);
+		} else if (!extensionProperty && pretty && jsonLDSchema.getAnyLicenseInfoTypes().contains(tv.getType())) {
 			AnyLicenseInfo licenseInfo = (AnyLicenseInfo)ModelRegistry.getModelRegistry().inflateModelObject(fromModelStore, tv.getObjectUri(), tv.getType(), new ModelCopyManager(), tv.getSpecVersion(), false, "");
 			return new TextNode(licenseInfo.toString());
 		} else {
 			// we should inline the object
 			return inlinedJsonNode(tv, fromModelStore, idToSerializedId);
 		}
+	}
+
+	/**
+	 * @param id IRI or blank node identifier
+	 * @return a JSON-LD node reference ({@code {"@id": id}})
+	 */
+	private JsonNode idReference(String id) {
+		ObjectNode retval = jsonMapper.createObjectNode();
+		retval.set("@id", new TextNode(id));
+		return retval;
 	}
 
 	/**
@@ -651,6 +668,10 @@ public class JsonLDSerializer {
 			Map<String, String> idToSerializedId) throws InvalidSPDXAnalysisException {
 		ObjectNode retval = jsonMapper.createObjectNode();
 		retval.set("type", new TextNode(typeToJsonType(tv.getType())));
+		if (!fromModelStore.isAnon(tv.getObjectUri())) {
+			// keep the IRI of an inlined object which is not a blank node
+			retval.set("@id", new TextNode(tv.getObjectUri()));
+		}
 		for (PropertyDescriptor prop:fromModelStore.getPropertyValueDescriptors(tv.getObjectUri())) {
 			if (fromModelStore.isCollectionProperty(tv.getObjectUri(), prop)) {
 				ArrayNode an = jsonMapper.createArrayNode();
@@ -676,6 +697,10 @@ public class JsonLDSerializer {
 	 * @return the JSON representation of the type
 	 */
 	private String typeToJsonType(String type) {
+		if (!JsonLDDeserializer.ALL_SPDX_TYPES.contains(type)) {
+			// custom (extension) type - already an IRI
+			return type;
+		}
 		String[] parts = type.split("\\.");
 		if (parts.length == 1) {
 			return type;

@@ -7,6 +7,8 @@ package org.spdx.v3jsonldstore;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -24,6 +26,7 @@ import java.util.concurrent.ConcurrentMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spdx.core.InvalidSPDXAnalysisException;
+import org.spdx.core.ModelRegistry;
 import org.spdx.core.SimpleUriValue;
 import org.spdx.core.TypedLiteral;
 import org.spdx.core.TypedValue;
@@ -63,6 +66,15 @@ public class JsonLDDeserializer {
 	 * JSON-LD 1.1 API section 8.2: a number with an absolute value of at least 10^21 is an xsd:double
 	 */
 	private static final BigDecimal MIN_DOUBLE_MAGNITUDE = new BigDecimal("1e21");
+	/**
+	 * JSON name of the Core extension property
+	 */
+	private static final String EXTENSION_PROP = "extension";
+
+	/**
+	 * Namespace prefix of all SPDX terms - types in this namespace are never custom types
+	 */
+	private static final String SPDX_NAMESPACE_PREFIX = "https://spdx.org/rdf/";
 	
 	static {
 		Set<String> allSpdxTypes = new HashSet<>();
@@ -135,7 +147,7 @@ public class JsonLDDeserializer {
 		for (JsonNode graphNode : graph) {
 			try {
 				deserializeCoreObject(graphNode, SpdxModelFactory.getLatestSpecVersion(),
-						creationInfoIdToSpecVersion, graphIdToTypedValue);
+						creationInfoIdToSpecVersion, graphIdToTypedValue, false);
 			} catch (GenerationException e) {
 				throw new InvalidSPDXAnalysisException("Unable to open schema file");
 			}
@@ -223,13 +235,16 @@ public class JsonLDDeserializer {
 	 * @param defaultSpecVersion version of the spec to use if no creation information is available
 	 * @param creationInfoIdToSpecVersion Map of creation info IDs to spec versions
 	 * @param graphIdToTypedValue map of top level Object URIs and IDs stored in the graph
+	 * @param allowCustomType if true, the object may have a type IRI not defined in the SPDX model
 	 * @return TypedValue of the core object
 	 * @throws InvalidSPDXAnalysisException on errors converting to SPDX
 	 * @throws GenerationException on errors creating the schema
 	 */
 	private synchronized TypedValue deserializeCoreObject(JsonNode node, String defaultSpecVersion,
-			Map<String, String> creationInfoIdToSpecVersion, Map<String, TypedValue> graphIdToTypedValue) throws InvalidSPDXAnalysisException, GenerationException {
-		TypedValue tv = getOrCreateCoreObject(node, graphIdToTypedValue, defaultSpecVersion, creationInfoIdToSpecVersion);
+			Map<String, String> creationInfoIdToSpecVersion, Map<String, TypedValue> graphIdToTypedValue,
+			boolean allowCustomType) throws InvalidSPDXAnalysisException, GenerationException {
+		TypedValue tv = getOrCreateCoreObject(node, graphIdToTypedValue, defaultSpecVersion, creationInfoIdToSpecVersion,
+				allowCustomType);
 		for (Entry<String, JsonNode> field: node.properties()) {
 			if (!NON_PROPERTY_FIELD_NAMES.contains(field.getKey())) {
 				PropertyDescriptor property;
@@ -263,12 +278,13 @@ public class JsonLDDeserializer {
 	 * @param graphIdToTypedValue map of top level Object URIs and IDs stored in the graph
 	 * @param defaultSpecVersion version of the spec to use if no creation information is available
 	 * @param creationInfoIdToSpecVersion Map of creation info IDs to spec versions
+	 * @param allowCustomType if true, the object may have a type IRI not defined in the SPDX model
 	 * @return existing or created TypedValue for the core object
 	 * @throws InvalidSPDXAnalysisException on model exceptions
 	 */
 	private TypedValue getOrCreateCoreObject(JsonNode node,
 			Map<String, TypedValue> graphIdToTypedValue, String defaultSpecVersion,
-			Map<String, String> creationInfoIdToSpecVersion) throws InvalidSPDXAnalysisException {
+			Map<String, String> creationInfoIdToSpecVersion, boolean allowCustomType) throws InvalidSPDXAnalysisException {
 		String jsonNodeId;
 		if (node.has("@id")) {
 			jsonNodeId = node.get("@id").asText();
@@ -292,12 +308,13 @@ public class JsonLDDeserializer {
 			} else {
 				id = jsonNodeId;
 			}
-			type = typeNodeToType(node.get("type"));
+			specVersion = getSpecVersionFromNode(node, creationInfoIdToSpecVersion, defaultSpecVersion);
+			type = allowCustomType ? typeNodeToTypeOrCustomType(node.get("type"), specVersion) :
+				typeNodeToType(node.get("type"));
 			if (type.isEmpty()) {
 				logger.error("Missing type for core object {}", node);
 				throw new InvalidSPDXAnalysisException("Missing type for core object " + node);
 			}
-			specVersion = getSpecVersionFromNode(node, creationInfoIdToSpecVersion, defaultSpecVersion);
 			TypedValue tv = new TypedValue(id, type.get(), specVersion);
 			modelStore.create(tv);
 			graphIdToTypedValue.put(id, tv);
@@ -345,7 +362,23 @@ public class JsonLDDeserializer {
 					throw new InvalidSPDXAnalysisException("Type mismatch.  Expecting "+propertyType+" but was a JSON Number");
 				}
 			}
-			case OBJECT: return deserializeCoreObject(value, specVersion, creationInfoIdToSpecVersion, graphIdToTypedValue);
+			case OBJECT: {
+				boolean extensionProperty = isExtensionProperty(propertyName, specVersion);
+				if (extensionProperty && value.has("@value")) {
+					// JSON-LD value object
+					return jsonLdValueObjectToStoredObject(propertyName, value, specVersion,
+							creationInfoIdToSpecVersion, graphIdToTypedValue);
+				} else if (extensionProperty && value.has("@id") && value.size() == 1) {
+					// JSON-LD node reference - an extension property has no type in the context
+					// so the reference can not be written as a plain string
+					return jsonStringToSpdxObject(value.get("@id"), specVersion, graphIdToTypedValue);
+				} else {
+					// Custom types are allowed where the SPDX model allows extensions and within
+					// the values of extension properties
+					return deserializeCoreObject(value, specVersion, creationInfoIdToSpecVersion, graphIdToTypedValue,
+							extensionProperty || EXTENSION_PROP.equals(propertyName));
+				}
+			}
 			case STRING:
 				return jsonStringToStoredValue(propertyName, value, specVersion, graphIdToTypedValue);
 			case BINARY:
@@ -417,6 +450,54 @@ public class JsonLDDeserializer {
 			return value.intValue();
 		} else {
 			return new TypedLiteral(value.toString(), XSD_INTEGER);
+		}
+	}
+
+	/**
+	 * @param propertyName name of the property in the JSON
+	 * @param specVersion version of the spec
+	 * @return true if the property is not defined in the SPDX JSON-LD context, i.e., it is an extension property
+	 * @throws GenerationException on errors obtaining the schema
+	 */
+	private boolean isExtensionProperty(String propertyName, String specVersion) throws GenerationException {
+		return getOrCreateSchema(specVersion).getPropertyDescriptor(propertyName).isEmpty();
+	}
+
+	/**
+	 * Converts a JSON-LD value object (an object with an {@code @value}) to a stored value
+	 * <p>
+	 * A value object with an {@code @type} is stored as a {@link TypedLiteral} so that the
+	 * lexical form and the datatype are kept.  A value object without an {@code @type} is
+	 * stored the same way as its {@code @value}.
+	 * </p>
+	 * @param propertyName the name of the property in the JSON
+	 * @param value JSON-LD value object
+	 * @param specVersion version of the spec
+	 * @param creationInfoIdToSpecVersion Map of creation info IDs to spec versions
+	 * @param graphIdToTypedValue map of top level Object URIs and IDs stored in the graph
+	 * @return an object suitable for storing in the model store
+	 * @throws InvalidSPDXAnalysisException on unsupported or invalid value objects
+	 * @throws GenerationException on errors obtaining the schema
+	 */
+	private Object jsonLdValueObjectToStoredObject(String propertyName, JsonNode value, String specVersion,
+			Map<String, String> creationInfoIdToSpecVersion, Map<String, TypedValue> graphIdToTypedValue) throws InvalidSPDXAnalysisException, GenerationException {
+		for (Entry<String, JsonNode> field : value.properties()) {
+			if (!"@value".equals(field.getKey()) && !"@type".equals(field.getKey())) {
+				throw new InvalidSPDXAnalysisException("Unsupported key "+field.getKey()+" in JSON-LD value object for property "+propertyName);
+			}
+		}
+		JsonNode literal = value.get("@value");
+		if (!literal.isValueNode() || literal.isNull()) {
+			throw new InvalidSPDXAnalysisException("Invalid @value in JSON-LD value object for property "+propertyName);
+		}
+		if (value.has("@type")) {
+			JsonNode datatype = value.get("@type");
+			if (!datatype.isTextual()) {
+				throw new InvalidSPDXAnalysisException("Invalid @type in JSON-LD value object for property "+propertyName);
+			}
+			return new TypedLiteral(literal.asText(), datatype.asText());
+		} else {
+			return toStoredObject(propertyName, literal, specVersion, creationInfoIdToSpecVersion, graphIdToTypedValue);
 		}
 	}
 
@@ -576,6 +657,49 @@ public class JsonLDDeserializer {
 	}
 
 	/**
+	 * Converts a type node to an SPDX type, or to a custom type if the type is an IRI
+	 * outside the SPDX namespace
+	 * <p>
+	 * A custom type which has no class registered in the {@link ModelRegistry} is registered
+	 * as a {@link GenericExtension} so that it can be stored and inflated.
+	 * </p>
+	 * @param typeNode node containing the type
+	 * @param specVersion version of the spec
+	 * @return the SPDX type or the custom type IRI
+	 * @throws InvalidSPDXAnalysisException on errors registering the custom type
+	 */
+	private Optional<String> typeNodeToTypeOrCustomType(JsonNode typeNode, String specVersion) throws InvalidSPDXAnalysisException {
+		Optional<String> spdxType = typeNodeToType(typeNode);
+		if (spdxType.isPresent() || Objects.isNull(typeNode)) {
+			return spdxType;
+		}
+		String jsonType = typeNode.asText();
+		if (!isAbsoluteIri(jsonType) || jsonType.startsWith(SPDX_NAMESPACE_PREFIX)) {
+			return Optional.empty();
+		}
+		ModelRegistry registry = ModelRegistry.getModelRegistry();
+		synchronized (JsonLDDeserializer.class) {
+			if (Objects.isNull(registry.typeToClass(jsonType, specVersion))) {
+				registry.registerExtensionType(jsonType, GenericExtension.class);
+			}
+		}
+		return Optional.of(jsonType);
+	}
+
+	/**
+	 * @param value string to check
+	 * @return true if the value is an absolute IRI (not a blank node identifier)
+	 */
+	private static boolean isAbsoluteIri(String value) {
+		try {
+			URI uri = new URI(value);
+			return uri.isAbsolute() && !"_".equals(uri.getScheme());
+		} catch (URISyntaxException e) {
+			return false;
+		}
+	}
+
+	/**
 	 * Deserialize a single element into the modelStore
 	 * @param elementNode element to deserialize
 	 * @return the typedValue of the deserialized object
@@ -601,7 +725,8 @@ public class JsonLDDeserializer {
 			modelStore.create(tv);
 			mapIdToTypedValue.put(id, tv);
 		}
-		return deserializeCoreObject(elementNode, SpdxModelFactory.getLatestSpecVersion(), creationInfoIdToSpecVersion, mapIdToTypedValue);
+		return deserializeCoreObject(elementNode, SpdxModelFactory.getLatestSpecVersion(), creationInfoIdToSpecVersion,
+				mapIdToTypedValue, false);
 	}
 
 }

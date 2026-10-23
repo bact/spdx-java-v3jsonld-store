@@ -17,7 +17,10 @@ import java.util.stream.Collectors;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.spdx.core.IndividualUriValue;
 import org.spdx.core.InvalidSPDXAnalysisException;
+import org.spdx.core.TypedLiteral;
+import org.spdx.core.TypedValue;
 import org.spdx.library.ModelCopyManager;
 import org.spdx.library.SpdxModelFactory;
 import org.spdx.library.model.v3_0_1.SpdxConstantsV3;
@@ -29,12 +32,14 @@ import org.spdx.library.model.v3_0_1.core.ProfileIdentifierType;
 import org.spdx.library.model.v3_0_1.core.Relationship;
 import org.spdx.library.model.v3_0_1.core.RelationshipType;
 import org.spdx.library.model.v3_0_1.core.SpdxDocument;
+import org.spdx.library.model.v3_0_1.extension.Extension;
 import org.spdx.library.model.v3_0_1.software.Sbom;
 import org.spdx.library.model.v3_0_1.software.SbomType;
 import org.spdx.library.model.v3_0_1.software.SpdxFile;
 import org.spdx.library.model.v3_0_1.software.SpdxPackage;
 import org.spdx.storage.IModelStore;
 import org.spdx.storage.IModelStore.IdType;
+import org.spdx.storage.PropertyDescriptor;
 import org.spdx.storage.simple.InMemSpdxStore;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -48,6 +53,11 @@ public class JsonLDStoreTest {
 	private static final String PACKAGE_SBOM_FILE = "package_sbom.json";
 	private static final String NO_DOCUMENT_FILE = "no_document.json";
 	private static final String YOCTO_SPDX_FILE = "core-image-minimal.json";
+	private static final String CUSTOM_EXTENSION_FILE = "custom_extension.json";
+	private static final String EXT_NS = "https://example.org/spdx3-ext/synthetic-data/";
+	private static final String SYNTHETIC_DATA_EXTENSION_TYPE = EXT_NS + "SyntheticDataExtension";
+	private static final String XSD_DECIMAL = "http://www.w3.org/2001/XMLSchema#decimal";
+	private static final String XSD_DATE_TIME = "http://www.w3.org/2001/XMLSchema#dateTime";
 	IModelStore innerStore;
 
 	/**
@@ -273,6 +283,99 @@ public class JsonLDStoreTest {
 			assertEquals(17805, doc.getElements().size());
 			List<String> verify = doc.verify();
 			assertTrue(verify.isEmpty());
+		}
+	}
+
+	/**
+	 * Find the graph node with the given spdxId
+	 */
+	private static JsonNode findGraphNode(JsonNode root, String spdxId) {
+		for (JsonNode node : root.get("@graph")) {
+			if (node.has("spdxId") && spdxId.equals(node.get("spdxId").asText())) {
+				return node;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Find the extension object with the given type in an element node
+	 */
+	private static JsonNode findExtensionNode(JsonNode elementNode, String type) {
+		for (JsonNode ext : elementNode.get("extension")) {
+			if (type.equals(ext.get("type").asText())) {
+				return ext;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Custom extension types (full IRIs) and JSON-LD value objects in extension properties
+	 * must deserialize, verify, and serialize back without loss
+	 * @throws Exception on error
+	 */
+	@Test
+	public void testCustomExtensionRoundTrip() throws Exception {
+		ObjectMapper mapper = new ObjectMapper();
+		JsonNode input;
+		try (InputStream is = getClass().getClassLoader().getResourceAsStream(CUSTOM_EXTENSION_FILE)) {
+			input = mapper.readTree(is);
+		}
+		String datasetId = "https://example.org/spdx/dataset/instruct-mix";
+		String teacherId = "https://example.org/spdx/model/teacher-llm";
+		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
+			try (InputStream is = getClass().getClassLoader().getResourceAsStream(CUSTOM_EXTENSION_FILE)) {
+				ldStore.deSerialize(is, false);
+			}
+			List<SpdxDocument> docs =
+					SpdxModelFactory.getSpdxObjects(ldStore, null, SpdxConstantsV3.CORE_SPDX_DOCUMENT, null, null)
+							.map(SpdxDocument.class::cast)
+							.collect(Collectors.toList());
+			assertEquals(1, docs.size());
+			List<String> verify = docs.get(0).verify();
+			assertTrue(verify.toString(), verify.isEmpty());
+
+			// model view of the extensions
+			Element dataset = (Element) SpdxModelFactory.inflateModelObject(ldStore, datasetId,
+					SpdxConstantsV3.DATASET_DATASET_PACKAGE, null, "3.0.1", false, "");
+			assertEquals(2, dataset.getExtensions().size());
+			Extension synthetic = null;
+			for (Extension ext : dataset.getExtensions()) {
+				if (SYNTHETIC_DATA_EXTENSION_TYPE.equals(ext.getType())) {
+					synthetic = ext;
+				}
+			}
+			assertNotNull(synthetic);
+			assertTrue(synthetic instanceof GenericExtension);
+			Object fraction = ldStore.getValue(synthetic.getObjectUri(),
+					new PropertyDescriptor("syntheticFraction", EXT_NS)).get();
+			assertEquals(new TypedLiteral("0.35", XSD_DECIMAL), fraction);
+			Object method = ldStore.getValue(synthetic.getObjectUri(),
+					new PropertyDescriptor("generationMethod", EXT_NS)).get();
+			assertTrue(method instanceof IndividualUriValue);
+			assertEquals(EXT_NS + "DataGenerationMethodType/mixed", ((IndividualUriValue) method).getIndividualURI());
+			Object generator = ldStore.getValue(synthetic.getObjectUri(),
+					new PropertyDescriptor("generatorModel", EXT_NS)).get();
+			assertTrue(generator instanceof TypedValue);
+			assertEquals(teacherId, ((TypedValue) generator).getObjectUri());
+
+			// serialize and compare the extension objects
+			JsonNode output;
+			try (ByteArrayOutputStream bas = new ByteArrayOutputStream()) {
+				ldStore.serialize(bas);
+				output = mapper.readTree(bas.toString());
+			}
+			for (String elementId : new String[] {datasetId, teacherId}) {
+				JsonNode inElement = findGraphNode(input, elementId);
+				JsonNode outElement = findGraphNode(output, elementId);
+				assertNotNull(outElement);
+				assertEquals(inElement.get("extension").size(), outElement.get("extension").size());
+				for (JsonNode inExt : inElement.get("extension")) {
+					JsonNode outExt = findExtensionNode(outElement, inExt.get("type").asText());
+					assertEquals(inExt, outExt);
+				}
+			}
 		}
 	}
 }
