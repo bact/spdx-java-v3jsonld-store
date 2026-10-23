@@ -61,6 +61,12 @@ public class JsonLDDeserializer {
 	private static final String SPEC_VERSION_PROP = "specVersion";
 
 	static final String XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer";
+	static final String XSD_DOUBLE = "http://www.w3.org/2001/XMLSchema#double";
+
+	/**
+	 * Prefixes commonly used in compact IRIs which the SPDX JSON-LD context does not define
+	 */
+	private static final Set<String> COMPACT_IRI_PREFIXES = Set.of("xsd", "rdf", "rdfs", "owl", "xml", "schema");
 
 	/**
 	 * JSON-LD 1.1 API section 8.2: a number with an absolute value of at least 10^21 is an xsd:double
@@ -98,6 +104,10 @@ public class JsonLDDeserializer {
 	private final ModelCopyManager copyManager;
 	private final ConcurrentMap<String, String> jsonAnonToStoreAnon = new ConcurrentHashMap<>();
 	private final ConcurrentMap<String, JsonLDSchema> versionToSchema = new ConcurrentHashMap<>();
+	/**
+	 * Store URIs of the objects whose properties were deserialized in the current deserialization
+	 */
+	private final Set<String> deserializedObjectUris = ConcurrentHashMap.newKeySet();
 
 	/**
 	 * @param modelStore Model store to deserialize the JSON text into
@@ -120,6 +130,7 @@ public class JsonLDDeserializer {
 			throw new InvalidSPDXAnalysisException("Invalid type for deserializeGraph - must be an array");
 		}
 		Map<String, String> creationInfoIdToSpecVersion = findCreationInfos(graph);
+		deserializedObjectUris.clear();
 
 		// Second pass - create the top level objects in the graph
 		Map<String, TypedValue> graphIdToTypedValue = new HashMap<>();
@@ -142,6 +153,11 @@ public class JsonLDDeserializer {
 				logger.warn("Missing ID for one of the SPDX objects in the graph");
 			}
 		}
+		// create the nested objects with an ID so that they can be referenced from anywhere in the graph
+		for (JsonNode graphNode : graph) {
+			createNestedObjects(graphNode, getSpecVersionFromNode(graphNode, creationInfoIdToSpecVersion,
+					SpdxModelFactory.getLatestSpecVersion()), graphIdToTypedValue);
+		}
 
 		// 3rd pass - deserialize the properties
 		for (JsonNode graphNode : graph) {
@@ -155,6 +171,55 @@ public class JsonLDDeserializer {
 		return nonAnonGraphItems;
 	}
 	
+
+	/**
+	 * Creates the objects with an ID (IRI or blank node identifier) nested in the properties of a node,
+	 * so that they can be referenced before or after the place where they are defined
+	 * @param node JSON node
+	 * @param specVersion version of the spec for the nested objects
+	 * @param graphIdToTypedValue map of JSON IDs to the objects created
+	 * @throws InvalidSPDXAnalysisException on errors creating the objects
+	 */
+	private void createNestedObjects(JsonNode node, String specVersion,
+			Map<String, TypedValue> graphIdToTypedValue) throws InvalidSPDXAnalysisException {
+		for (Entry<String, JsonNode> field : node.properties()) {
+			if (NON_PROPERTY_FIELD_NAMES.contains(field.getKey())) {
+				continue;
+			}
+			List<JsonNode> values = new ArrayList<>();
+			if (field.getValue().isArray()) {
+				field.getValue().forEach(values::add);
+			} else {
+				values.add(field.getValue());
+			}
+			for (JsonNode value : values) {
+				if (!value.isObject()) {
+					continue;
+				}
+				JsonNode id = value.has(SPDX_ID_PROP) ? value.get(SPDX_ID_PROP) : value.get("@id");
+				if (Objects.nonNull(id) && id.isTextual() && value.has("type") &&
+						!graphIdToTypedValue.containsKey(id.asText())) {
+					boolean allowCustomType;
+					try {
+						allowCustomType = EXTENSION_PROP.equals(field.getKey()) ||
+								isExtensionProperty(field.getKey(), specVersion);
+					} catch (GenerationException e) {
+						throw new InvalidSPDXAnalysisException("Unable to open schema file", e);
+					}
+					Optional<String> type = allowCustomType ? typeNodeToTypeOrCustomType(value.get("type"), specVersion) :
+						typeNodeToType(value.get("type"));
+					if (type.isPresent()) {
+						TypedValue tv = createTypedValueFromNode(id.asText(), type.get(), specVersion);
+						if (!modelStore.exists(tv.getObjectUri())) {
+							modelStore.create(tv);
+						}
+						graphIdToTypedValue.put(id.asText(), tv);
+					}
+				}
+				createNestedObjects(value, specVersion, graphIdToTypedValue);
+			}
+		}
+	}
 
 	/**
 	 * @param id from the JSON-LD file
@@ -245,6 +310,12 @@ public class JsonLDDeserializer {
 			boolean allowCustomType) throws InvalidSPDXAnalysisException, GenerationException {
 		TypedValue tv = getOrCreateCoreObject(node, graphIdToTypedValue, defaultSpecVersion, creationInfoIdToSpecVersion,
 				allowCustomType);
+		// An object with an ID can appear more than once (e.g., inlined in several places).  The properties
+		// of later occurrences are only added if the object does not already have a value for them,
+		// so that collection values are not repeated.
+		boolean alreadyDeserialized = !deserializedObjectUris.add(tv.getObjectUri());
+		List<PropertyDescriptor> existingProperties = alreadyDeserialized ?
+				modelStore.getPropertyValueDescriptors(tv.getObjectUri()) : Collections.emptyList();
 		for (Entry<String, JsonNode> field: node.properties()) {
 			if (!NON_PROPERTY_FIELD_NAMES.contains(field.getKey())) {
 				PropertyDescriptor property;
@@ -256,6 +327,9 @@ public class JsonLDDeserializer {
 					property = optDesc.get();
 				} catch (GenerationException e) {
 					throw new InvalidSPDXAnalysisException("Unable to convert a JSON field name to a property", e);
+				}
+				if (existingProperties.contains(property)) {
+					continue;
 				}
 				if (field.getValue().isArray()) {
 					for (JsonNode element : field.getValue()) {
@@ -481,6 +555,9 @@ public class JsonLDDeserializer {
 	 */
 	private Object jsonLdValueObjectToStoredObject(String propertyName, JsonNode value, String specVersion,
 			Map<String, String> creationInfoIdToSpecVersion, Map<String, TypedValue> graphIdToTypedValue) throws InvalidSPDXAnalysisException, GenerationException {
+		if (value.has("@language")) {
+			throw new InvalidSPDXAnalysisException("Language-tagged strings (@language) are not supported.  Property: "+propertyName);
+		}
 		for (Entry<String, JsonNode> field : value.properties()) {
 			if (!"@value".equals(field.getKey()) && !"@type".equals(field.getKey())) {
 				throw new InvalidSPDXAnalysisException("Unsupported key "+field.getKey()+" in JSON-LD value object for property "+propertyName);
@@ -490,16 +567,64 @@ public class JsonLDDeserializer {
 		if (!literal.isValueNode() || literal.isNull()) {
 			throw new InvalidSPDXAnalysisException("Invalid @value in JSON-LD value object for property "+propertyName);
 		}
-		if (value.has("@type")) {
-			JsonNode datatype = value.get("@type");
-			if (!datatype.isTextual()) {
-				throw new InvalidSPDXAnalysisException("Invalid @type in JSON-LD value object for property "+propertyName);
-			}
-			return new TypedLiteral(literal.asText(), datatype.asText());
-		} else {
+		if (!value.has("@type")) {
 			return toStoredObject(propertyName, literal, specVersion, creationInfoIdToSpecVersion, graphIdToTypedValue);
 		}
+		JsonNode datatypeNode = value.get("@type");
+		if (!datatypeNode.isTextual() || datatypeNode.asText().startsWith("@")) {
+			throw new InvalidSPDXAnalysisException("Unsupported @type "+datatypeNode+" in JSON-LD value object for property "+propertyName);
+		}
+		String datatype = getOrCreateSchema(specVersion).expandCompactIri(datatypeNode.asText());
+		if (!isAbsoluteIri(datatype)) {
+			throw new InvalidSPDXAnalysisException("The @type "+datatype+" in a JSON-LD value object must be an absolute IRI.  Property: "+propertyName);
+		}
+		if (COMPACT_IRI_PREFIXES.contains(datatype.substring(0, datatype.indexOf(':')))) {
+			logger.warn("The datatype {} of property {} looks like a compact IRI, but the SPDX JSON-LD context does not define its prefix.  It is kept as written.",
+					datatype, propertyName);
+		}
+		return new TypedLiteral(literalToLexicalForm(literal, datatype), datatype);
 	}
+
+	/**
+	 * Converts the {@code @value} of a value object with a datatype to its lexical form following
+	 * the JSON-LD 1.1 API (section 8.2)
+	 * @param literal {@code @value} - a string, boolean, or number
+	 * @param datatype datatype IRI
+	 * @return the lexical form
+	 */
+	static String literalToLexicalForm(JsonNode literal, String datatype) {
+		if (literal.isNumber()) {
+			Object number = untypedJsonNumberToStoredValue(literal);
+			if (XSD_DOUBLE.equals(datatype) || number instanceof Double) {
+				return canonicalDouble(literal.asDouble());
+			} else if (number instanceof TypedLiteral) {
+				return ((TypedLiteral) number).getValue();
+			} else {
+				return number.toString();
+			}
+		}
+		return literal.asText();
+	}
+
+	/**
+	 * @param d value
+	 * @return the canonical lexical form of an xsd:double, as used by the JSON-LD 1.1 API (e.g., 5.0E-1)
+	 */
+	static String canonicalDouble(double d) {
+		if (Double.isNaN(d)) {
+			return "NaN";
+		} else if (Double.isInfinite(d)) {
+			return d > 0 ? "INF" : "-INF";
+		} else if (d == 0) {
+			return 1 / d < 0 ? "-0.0E0" : "0.0E0";
+		}
+		BigDecimal decimal = new BigDecimal(Double.toString(d)).stripTrailingZeros();
+		String digits = decimal.unscaledValue().abs().toString();
+		int exponent = digits.length() - 1 - decimal.scale();
+		return (decimal.signum() < 0 ? "-" : "") + digits.charAt(0) + "." +
+				(digits.length() > 1 ? digits.substring(1) : "0") + "E" + exponent;
+	}
+
 
 	/**
 	 * @param propertyName name of property in the JSON schema
@@ -567,7 +692,7 @@ public class JsonLDDeserializer {
 			// either an individual URI or an external element
 			return new SimpleUriValue(jsonValue.asText());
 		} else {
-			throw new InvalidSPDXAnalysisException("Can not determine property type for "+jsonValue.asText());
+			throw new InvalidSPDXAnalysisException("Unknown blank node reference "+jsonValue.asText());
 		}
 	}
 
@@ -670,21 +795,27 @@ public class JsonLDDeserializer {
 	 */
 	private Optional<String> typeNodeToTypeOrCustomType(JsonNode typeNode, String specVersion) throws InvalidSPDXAnalysisException {
 		Optional<String> spdxType = typeNodeToType(typeNode);
-		if (spdxType.isPresent() || Objects.isNull(typeNode)) {
+		if (spdxType.isPresent() || Objects.isNull(typeNode) || !typeNode.isTextual()) {
 			return spdxType;
 		}
-		String jsonType = typeNode.asText();
-		if (!isAbsoluteIri(jsonType) || jsonType.startsWith(SPDX_NAMESPACE_PREFIX)) {
+		String customType;
+		try {
+			customType = getOrCreateSchema(specVersion).expandCompactIri(typeNode.asText());
+		} catch (GenerationException e) {
+			throw new InvalidSPDXAnalysisException("Unable to open schema file", e);
+		}
+		if (!isAbsoluteIri(customType) || customType.startsWith(SPDX_NAMESPACE_PREFIX)) {
 			return Optional.empty();
 		}
+		// Use the default extension type of the registry rather than registering each type IRI found
+		// in the input.  An application may register its own class for a type or its own default.
 		ModelRegistry registry = ModelRegistry.getModelRegistry();
-		synchronized (JsonLDDeserializer.class) {
-			if (Objects.isNull(registry.typeToClass(jsonType, specVersion))) {
-				registry.registerExtensionType(jsonType, GenericExtension.class);
-			}
+		if (Objects.isNull(registry.getDefaultExtensionType())) {
+			registry.registerDefaultExtensionTypeIfAbsent(GenericExtension.class);
 		}
-		return Optional.of(jsonType);
+		return Objects.isNull(registry.typeToClass(customType, specVersion)) ? Optional.empty() : Optional.of(customType);
 	}
+
 
 	/**
 	 * @param value string to check
@@ -709,6 +840,7 @@ public class JsonLDDeserializer {
 	public TypedValue deserializeElement(JsonNode elementNode) throws GenerationException, InvalidSPDXAnalysisException {
 		Map<String, TypedValue> mapIdToTypedValue = new HashMap<>();
 		Map<String, String> creationInfoIdToSpecVersion = new HashMap<>();
+		deserializedObjectUris.clear();
 		
 		String id = elementNode.has(SPDX_ID_PROP) ? elementNode.get(SPDX_ID_PROP).asText() : elementNode.get("@id").asText();
 		if (Objects.nonNull(id)) {
@@ -724,6 +856,7 @@ public class JsonLDDeserializer {
 			TypedValue tv = new TypedValue(id, type.get(), specVersion);
 			modelStore.create(tv);
 			mapIdToTypedValue.put(id, tv);
+			createNestedObjects(elementNode, specVersion, mapIdToTypedValue);
 		}
 		return deserializeCoreObject(elementNode, SpdxModelFactory.getLatestSpecVersion(), creationInfoIdToSpecVersion,
 				mapIdToTypedValue, false);

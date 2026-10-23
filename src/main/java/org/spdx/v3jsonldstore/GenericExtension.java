@@ -27,9 +27,11 @@ import org.spdx.storage.IModelStore;
  * SPDX 3 lets anyone define a subclass of <code>Extension</code>, identified by
  * a full IRI. When a document uses such a type and no class has been registered
  * for it with {@link org.spdx.core.ModelRegistry#registerExtensionType(String, Class)},
- * the deserializer registers the type with this class. The type IRI and all
- * property values are kept in the model store, so the object can be verified,
- * copied, and serialized again without loss.
+ * the deserializer uses this class, registered once as the default extension type
+ * with {@link org.spdx.core.ModelRegistry#registerDefaultExtensionTypeIfAbsent(Class)}
+ * (unless the application registered its own default). Type IRIs are not registered
+ * one by one. The type IRI and all property values are kept in the model store, so
+ * the object can be verified, copied, and serialized again without loss.
  * </p>
  * <p>
  * The same class is used for objects of an unknown type nested in the
