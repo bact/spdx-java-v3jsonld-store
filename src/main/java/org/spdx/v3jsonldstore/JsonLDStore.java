@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.*;
+import java.util.regex.Pattern;
 
 import javax.annotation.Nullable;
 
@@ -56,6 +57,14 @@ public class JsonLDStore extends ExtendedSpdxStore
 	 */
 	static final ObjectMapper JSON_MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT)
 			.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+
+	private static final String CONTEXT_PROP = "@context";
+	/**
+	 * URLs of the SPDX contexts, e.g. https://spdx.org/rdf/3.0.1/spdx-context.jsonld
+	 */
+	private static final Pattern SPDX_CONTEXT_URL_PATTERN =
+			Pattern.compile("https://spdx\\.org/rdf/3\\.[0-9]+(\\.[0-9]+)*/spdx-context\\.jsonld");
+	private static final int MAX_CONTEXT_LENGTH_IN_MESSAGE = 200;
 	
 	@SuppressWarnings("UnusedAssignment")
     boolean pretty = true;
@@ -135,6 +144,7 @@ public class JsonLDStore extends ExtendedSpdxStore
 			throws InvalidSPDXAnalysisException, IOException {
 		Objects.requireNonNull(stream, "Input stream must not be null");
 		JsonNode root = JSON_MAPPER.readTree(stream);
+		checkContexts(root);
 		if (!overwrite) {
 			List<String> existingElementUris = getExistingElementUris(root);
 			if (!existingElementUris.isEmpty()) {
@@ -169,6 +179,77 @@ public class JsonLDStore extends ExtendedSpdxStore
 		}
 	}
 
+
+	/**
+	 * Checks that the document only uses the SPDX context.
+	 *
+	 * The store does not implement JSON-LD context processing: the terms are read as defined by the
+	 * SPDX context.  A document with any other context (an additional context in the top level
+	 * <code>@context</code> or a <code>@context</code> embedded in the graph) would be misread, so it
+	 * is rejected.
+	 *
+	 * @param root root of the JSON-LD document
+	 * @throws InvalidSPDXAnalysisException if the document uses a context other than the SPDX context
+	 */
+	private static void checkContexts(JsonNode root) throws InvalidSPDXAnalysisException {
+		if (!root.isObject()) {
+			return;
+		}
+		JsonNode context = root.get(CONTEXT_PROP);
+		if (Objects.nonNull(context)) {
+			if (context.isArray()) {
+				for (JsonNode item : context) {
+					checkTopLevelContextItem(item);
+				}
+			} else {
+				checkTopLevelContextItem(context);
+			}
+		}
+		for (Map.Entry<String, JsonNode> field : root.properties()) {
+			if (!CONTEXT_PROP.equals(field.getKey())) {
+				checkNoEmbeddedContext(field.getValue());
+			}
+		}
+	}
+
+	/**
+	 * @param item item of the top level <code>@context</code>
+	 * @throws InvalidSPDXAnalysisException if the item is not an SPDX context URL
+	 */
+	private static void checkTopLevelContextItem(JsonNode item) throws InvalidSPDXAnalysisException {
+		if (!item.isTextual() || !SPDX_CONTEXT_URL_PATTERN.matcher(item.asText()).matches()) {
+			throw new InvalidSPDXAnalysisException("Unsupported @context item " + truncate(item.toString())
+					+ ": this store only processes the SPDX context; additional contexts are not supported");
+		}
+	}
+
+	/**
+	 * @param node JSON node in the document
+	 * @throws InvalidSPDXAnalysisException if the node contains a <code>@context</code>
+	 */
+	private static void checkNoEmbeddedContext(JsonNode node) throws InvalidSPDXAnalysisException {
+		if (node.isArray()) {
+			for (JsonNode item : node) {
+				checkNoEmbeddedContext(item);
+			}
+		} else if (node.isObject()) {
+			JsonNode context = node.get(CONTEXT_PROP);
+			if (Objects.nonNull(context)) {
+				throw new InvalidSPDXAnalysisException("Unsupported embedded @context " + truncate(context.toString())
+						+ ": this store only processes the SPDX context; embedded contexts are not supported");
+			}
+			for (JsonNode value : node) {
+				checkNoEmbeddedContext(value);
+			}
+		}
+	}
+
+	/**
+	 * @return the text, shortened for an error message
+	 */
+	private static String truncate(String text) {
+		return text.length() > MAX_CONTEXT_LENGTH_IN_MESSAGE ? text.substring(0, MAX_CONTEXT_LENGTH_IN_MESSAGE) + "..." : text;
+	}
 
 	/**
 	 * Converts a list of elements from a serialized graph into an SPDX document

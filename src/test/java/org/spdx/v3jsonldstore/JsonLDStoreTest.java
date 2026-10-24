@@ -752,4 +752,57 @@ public class JsonLDStoreTest {
 			}
 		}
 	}
+
+	/**
+	 * The store does not process JSON-LD contexts: a document is only read with the SPDX context,
+	 * anything else is rejected instead of being misread
+	 */
+	@Test
+	public void testUnsupportedContext() throws Exception {
+		String spdxContext = "\"https://spdx.org/rdf/3.0.1/spdx-context.jsonld\"";
+		// an array with only the SPDX context is the SPDX context
+		ObjectNode doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
+		doc.set("@context", new ObjectMapper().readTree("[" + spdxContext + "]"));
+		roundTrip(doc);
+
+		String[][] rejectedContexts = new String[][] {
+			{"[" + spdxContext + ", {\"sd\": \"https://example.org/sd/\"}]", "https://example.org/sd/"},
+			{"[" + spdxContext + ", \"https://example.org/ext/context.jsonld\"]", "https://example.org/ext/context.jsonld"},
+			{"\"https://example.org/ext/context.jsonld\"", "https://example.org/ext/context.jsonld"},
+			{"{\"sd\": \"https://example.org/sd/\"}", "https://example.org/sd/"},
+		};
+		for (String[] context : rejectedContexts) {
+			doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
+			doc.set("@context", new ObjectMapper().readTree(context[0]));
+			try {
+				roundTrip(doc);
+				fail("Context should be rejected: " + context[0]);
+			} catch (InvalidSPDXAnalysisException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains("@context") && e.getMessage().contains(context[1]));
+			}
+		}
+
+		// an embedded context in an extension object or in a nested value
+		String[] embedded = new String[] {
+			"{\"@context\": {\"name\": \"https://example.org/not-spdx/name\"}, \"type\": \"" + X + "T\", \"" + X + "a\": 1}",
+			"{\"type\": \"" + X + "T\", \"" + X + "a\": {\"@context\": {\"v\": \"" + X + "v\"}, \"type\": \"" + X + "N\", \"v\": 1}}",
+		};
+		for (String ext : embedded) {
+			try {
+				roundTrip(documentWithExtension(ext));
+				fail("Embedded context should be rejected: " + ext);
+			} catch (InvalidSPDXAnalysisException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains("@context") && e.getMessage().contains("not-spdx/name") == ext.contains("not-spdx/name"));
+			}
+		}
+		// an embedded context in a node object of the graph
+		doc = (ObjectNode) readResource(EXTENSION_MINIMAL_FILE);
+		((ObjectNode) findGraphNode(doc, DATASET_ID)).set("@context", new ObjectMapper().readTree("{\"name\": \"https://example.org/n\"}"));
+		try {
+			roundTrip(doc);
+			fail("Embedded context in a graph node should be rejected");
+		} catch (InvalidSPDXAnalysisException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("@context"));
+		}
+	}
 }
