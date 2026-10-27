@@ -7,7 +7,9 @@ package org.spdx.v3jsonldstore;
 
 import static org.junit.Assert.*;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -228,6 +230,49 @@ public class JsonLDStoreTest {
 					//expected
 				}
 			}
+		}
+	}
+
+	/**
+	 * A valid integer too large for the Java model (e.g., a dataset size above 2^31-1) must load,
+	 * be reported by verify, and be written back unchanged
+	 * @throws Exception on error
+	 */
+	@Test
+	public void testLargeSpdxInteger() throws Exception {
+		String json = "{\"@context\": \"https://spdx.org/rdf/3.0.1/spdx-context.jsonld\", \"@graph\": ["
+				+ "{\"type\": \"CreationInfo\", \"@id\": \"_:c\", \"specVersion\": \"3.0.1\","
+				+ " \"created\": \"2024-07-18T12:00:00Z\", \"createdBy\": [\"https://example.org/p\"]},"
+				+ "{\"type\": \"Person\", \"spdxId\": \"https://example.org/p\", \"name\": \"P\", \"creationInfo\": \"_:c\"},"
+				+ "{\"type\": \"dataset_DatasetPackage\", \"spdxId\": \"https://example.org/d\", \"name\": \"D\","
+				+ " \"creationInfo\": \"_:c\", \"software_primaryPurpose\": \"data\", \"dataset_datasetType\": [\"text\"],"
+				+ " \"builtTime\": \"2024-07-18T12:00:00Z\", \"originatedBy\": [\"https://example.org/p\"],"
+				+ " \"releaseTime\": \"2024-07-18T12:00:00Z\", \"software_downloadLocation\": \"https://example.org/dl\","
+				+ " \"dataset_datasetSize\": 21474836480}]}";
+		try (JsonLDStore ldStore = new JsonLDStore(innerStore)) {
+			try (InputStream is = new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8))) {
+				ldStore.deSerialize(is, false);
+			}
+			Element dataset = (Element) SpdxModelFactory.getSpdxObjects(ldStore, null,
+					SpdxConstantsV3.DATASET_DATASET_PACKAGE, null, null).findFirst().get();
+			List<String> verify = dataset.verify();
+			assertTrue(verify.toString(), verify.stream().anyMatch(v -> v.contains("datasetSize") && v.contains("21474836480")));
+
+			String result;
+			try (ByteArrayOutputStream bas = new ByteArrayOutputStream()) {
+				ldStore.serialize(bas);
+				result = bas.toString();
+			}
+			JsonNode root = new ObjectMapper().readTree(result);
+			JsonNode size = null;
+			for (JsonNode node : root.get("@graph")) {
+				if (node.has("dataset_datasetSize")) {
+					size = node.get("dataset_datasetSize");
+				}
+			}
+			assertNotNull(result, size);
+			assertTrue(size.isIntegralNumber());
+			assertEquals("21474836480", size.asText());
 		}
 	}
 

@@ -586,7 +586,13 @@ JsonLDDeserializer deserializer = new JsonLDDeserializer(modelStore);
 		assertEquals(Integer.valueOf(3), deserializeBeginIntegerRange("3"));
 		assertEquals(Integer.valueOf(3), deserializeBeginIntegerRange("3.0"));
 		assertEquals(Integer.valueOf(Integer.MAX_VALUE), deserializeBeginIntegerRange("2147483647"));
-		for (String invalid : new String[] {"1.5", "2147483648", "-2147483649", "1e400", "1e-400"}) {
+		// Valid xsd:integer values that do not fit in an int are kept exactly, not wrapped or rejected
+		assertEquals(new TypedLiteral("2147483648", JsonLDDeserializer.XSD_INTEGER), deserializeBeginIntegerRange("2147483648"));
+		assertEquals(new TypedLiteral("-2147483649", JsonLDDeserializer.XSD_INTEGER), deserializeBeginIntegerRange("-2147483649"));
+		assertEquals(new TypedLiteral("21474836480", JsonLDDeserializer.XSD_INTEGER), deserializeBeginIntegerRange("21474836480.0"));
+		assertEquals(Integer.valueOf(5), deserializeBeginIntegerRange("\"5\""));
+		assertEquals(new TypedLiteral("99999999999", JsonLDDeserializer.XSD_INTEGER), deserializeBeginIntegerRange("\"99999999999\""));
+		for (String invalid : new String[] {"1.5", "1e400", "1e-400", "\"abc\"", "\"1.5\""}) {
 			try {
 				deserializeBeginIntegerRange(invalid);
 				fail("Expected an error for "+invalid);

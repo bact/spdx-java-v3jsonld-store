@@ -5,6 +5,7 @@
  */
 package org.spdx.v3jsonldstore;
 
+import java.math.BigInteger;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
+import com.fasterxml.jackson.databind.node.BigIntegerNode;
 import com.fasterxml.jackson.databind.node.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -544,6 +546,15 @@ public class JsonLDSerializer {
 			return isSpdxProperty(prop) ? spdxDecimalToJsonNode(d, prop) : extensionDoubleToJsonNode(d);
 		} else if (object instanceof TypedLiteral) {
 			if (isSpdxProperty(prop)) {
+				// An SPDX integer property value too large for an Integer (see JsonLDDeserializer)
+				TypedLiteral literal = (TypedLiteral)object;
+				if (JsonLDDeserializer.XSD_INTEGER.equals(literal.getDatatype())) {
+					try {
+						return new BigIntegerNode(new BigInteger(literal.getValue()));
+					} catch (NumberFormatException e) {
+						throw new InvalidSPDXAnalysisException("Invalid integer "+literal.getValue()+" for the SPDX property "+prop);
+					}
+				}
 				throw new InvalidSPDXAnalysisException("A typed literal can not be the value of the SPDX property "+prop);
 			}
 			ObjectNode valueObject = jsonMapper.createObjectNode();

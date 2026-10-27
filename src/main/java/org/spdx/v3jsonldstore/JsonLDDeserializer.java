@@ -336,9 +336,9 @@ public class JsonLDDeserializer {
 					// No schema type (e.g., an extension property) - preserve the JSON number
 					return untypedJsonNumberToStoredValue(value);
 				} else if (JsonLDSchema.INTEGER_TYPES.contains(propertyType.get())) {
-					return jsonNumberToInt(propertyName, value);
+					return jsonNumberToSpdxInteger(propertyName, value);
 				} else if (JsonLDSchema.DOUBLE_TYPES.contains(propertyType.get())) {
-					return value.asDouble();
+					return checkSpdxDecimal(propertyName, value.asDouble());
 				} else if (JsonLDSchema.STRING_TYPES.contains(propertyType.get())) {
 					return value.asText();
 				} else {
@@ -356,21 +356,56 @@ public class JsonLDDeserializer {
 	}
 
 	/**
+	 * The Java model holds SPDX integer properties as an Integer, but their XSD types (e.g.,
+	 * xsd:nonNegativeInteger) are unbounded.  A valid value outside of the int range is kept
+	 * exactly as an xsd:integer {@link TypedLiteral}: it is written back unchanged, and reading it
+	 * through the model reports a type error instead of a wrong number.
+	 *
 	 * @param propertyName name of the SPDX integer property
 	 * @param value JSON number
-	 * @return the value as an int
-	 * @throws InvalidSPDXAnalysisException if the value is not an integer or is outside of the int range
+	 * @return an Integer, or an xsd:integer {@link TypedLiteral} if the value does not fit in an int
+	 * @throws InvalidSPDXAnalysisException if the value is not an integer
 	 */
-	static int jsonNumberToInt(String propertyName, JsonNode value) throws InvalidSPDXAnalysisException {
+	static Object jsonNumberToSpdxInteger(String propertyName, JsonNode value) throws InvalidSPDXAnalysisException {
+		// Double.isFinite also rules out a huge exponent (e.g., 1e999999999) before it is expanded
 		if (value.isIntegralNumber() || Double.isFinite(value.asDouble())) {
 			try {
-				return value.decimalValue().intValueExact();
+				return integerToStoredValue(value.decimalValue().toBigIntegerExact());
 			} catch (ArithmeticException e) {
-				// not an integer, or out of range
+				// not an integer
 			}
 		}
 		throw new InvalidSPDXAnalysisException("Invalid value " + value.asText() + " for the integer property " +
-				propertyName + ": the value must be an integer between " + Integer.MIN_VALUE + " and " + Integer.MAX_VALUE);
+				propertyName + ": the value must be an integer");
+	}
+
+	/**
+	 * @param propertyName name of the SPDX integer property
+	 * @param text string value
+	 * @return an Integer, or an xsd:integer {@link TypedLiteral} if the value does not fit in an int
+	 * @throws InvalidSPDXAnalysisException if the value is not an integer
+	 */
+	static Object stringToSpdxInteger(String propertyName, String text) throws InvalidSPDXAnalysisException {
+		try {
+			return integerToStoredValue(new BigInteger(text.trim()));
+		} catch (NumberFormatException e) {
+			throw new InvalidSPDXAnalysisException("Invalid value " + text + " for the integer property " +
+					propertyName + ": the value must be an integer");
+		}
+	}
+
+	/**
+	 * @param propertyName name of the SPDX decimal property
+	 * @param value parsed value
+	 * @return the value
+	 * @throws InvalidSPDXAnalysisException if the value is not finite
+	 */
+	static double checkSpdxDecimal(String propertyName, double value) throws InvalidSPDXAnalysisException {
+		if (!Double.isFinite(value)) {
+			throw new InvalidSPDXAnalysisException("Invalid value " + value + " for the decimal property " +
+					propertyName + ": the value must be a finite number");
+		}
+		return value;
 	}
 
 	/**
@@ -450,9 +485,14 @@ public class JsonLDDeserializer {
 			} else if (JsonLDSchema.STRING_TYPES.contains(propertyType.get())) {
 				return jsonValue.asText();
 			} else if (JsonLDSchema.DOUBLE_TYPES.contains(propertyType.get())) {
-				return Double.parseDouble(jsonValue.asText());
+				try {
+					return checkSpdxDecimal(propertyName, Double.parseDouble(jsonValue.asText()));
+				} catch (NumberFormatException e) {
+					throw new InvalidSPDXAnalysisException("Invalid value " + jsonValue.asText() +
+							" for the decimal property " + propertyName + ": the value must be a number");
+				}
 			} else if (JsonLDSchema.INTEGER_TYPES.contains(propertyType.get())) {
-				return Integer.parseInt(jsonValue.asText());
+				return stringToSpdxInteger(propertyName, jsonValue.asText());
 			} else if (JsonLDSchema.BOOLEAN_TYPES.contains(propertyType.get())) {
 				return Boolean.parseBoolean(jsonValue.asText());
 			} else {
