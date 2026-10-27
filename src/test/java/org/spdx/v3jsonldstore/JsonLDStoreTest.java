@@ -409,7 +409,7 @@ public class JsonLDStoreTest {
 			Object method = ldStore.getValue(synthetic.getObjectUri(),
 					new PropertyDescriptor("generationMethod", EXT_NS)).get();
 			assertTrue(method instanceof IndividualUriValue);
-			assertEquals(EXT_NS + "DataGenerationMethodType/mixed", ((IndividualUriValue) method).getIndividualURI());
+			assertEquals(EXT_NS + "DataGenerationMethod/mixed", ((IndividualUriValue) method).getIndividualURI());
 			Object generator = ldStore.getValue(synthetic.getObjectUri(),
 					new PropertyDescriptor("generatorModel", EXT_NS)).get();
 			assertTrue(generator instanceof TypedValue);
